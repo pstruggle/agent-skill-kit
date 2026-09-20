@@ -1,0 +1,23 @@
+# Notes: {{taskId}}
+
+> 决策点审计（standard/full 模式）：**只在**改变方向、遇阻换方案、验收通过时记录。
+> 不记录每个工具调用。时间戳 ISO 8601。追加模式，不删改历史；纠错用 CORRECTION 条目。
+> 教训沉淀：解决坑后追加「## 教训: <错误签名>」条目，供 `python sop.py lessons <task> [关键词]` 检索。
+
+## {{timestamp}} — {{summary}}
+
+- **决策**: {{decision}}
+- **依据**: {{rationale}}
+- **关联**: `plan.md#step-{{planStep}}` | 实验哈希 `{{experimentHash}}`
+- **观测**: {{observation}}
+- **下一步**: {{nextStep}}
+
+## 教训: {{errorSignature}}
+
+- **症状**: {{symptom}}
+- **根因**: {{rootCause}}
+- **对策**: {{fix}}
+- **验证**: {{verification}}
+- **关联**: `plan.md#step-{{planStep}}` | 实验哈希 `{{experimentHash}}`
+
+<!-- 复制上方条目模板使用：每条决策点一个条目；每次踩坑并解决后沉淀一条教训（用可 grep 的错误签名/症状作标题）。 -->

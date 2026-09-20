@@ -1,0 +1,37 @@
+# Plan: {{taskId}}
+
+| 字段 | 值 |
+|------|-----|
+| task.id | {{taskId}} |
+| task.title | {{title}} |
+| task.type | {{taskType}} |
+| mode | {{mode}} (light / standard / full) |
+| context.dimensions | {{contextDimensions}} |
+
+## objective
+
+{{objective}}
+
+## scope
+
+- **included**: {{scopeIncluded}}
+- **excluded**: {{scopeExcluded}}
+
+## acceptance
+
+{{acceptance}}
+
+## steps
+
+{{steps}}
+
+## risks
+
+{{risks}}
+
+## dependencies
+
+{{dependencies}}
+
+<!-- 说明：必填 = task.id / task.title / task.type / objective / scope.included / acceptance / steps。
+     缺失或字段不全时，先补全再执行（light 模式可只写最小计划）。 -->
