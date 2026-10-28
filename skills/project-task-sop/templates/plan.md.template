@@ -33,5 +33,10 @@
 
 {{dependencies}}
 
+## assumptions
+
+{{assumptions}}
+
 <!-- 说明：必填 = task.id / task.title / task.type / objective / scope.included / acceptance / steps。
-     缺失或字段不全时，先补全再执行（light 模式可只写最小计划）。 -->
+     缺失或字段不全时，先补全再执行（light 模式可只写最小计划）。
+     assumptions 为可选项，仅在用户授权跳过关键边界澄清时，记录所采用的关键假设。 -->

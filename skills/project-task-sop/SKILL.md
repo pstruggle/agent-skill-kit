@@ -1,6 +1,6 @@
 ---
 name: project-task-sop
-description: 轻量项目任务执行规程：规模决策门（light/standard/full）、模块化上下文索引、JSONL 实验去重记录、教训检索、决策点审计笔记；sop.py 提供 init/refresh/dedup/record/render/check/lessons/tokens
+description: 轻量项目任务执行规程：启动前边界对齐、规模决策门（light/standard/full）、模块化上下文索引、JSONL 实验去重记录、教训检索、决策点审计笔记；sop.py 提供 init/refresh/dedup/record/render/check/lessons/tokens
 whenToUse:
   - 开始新的项目任务前
   - 需要避免重复已知失败的尝试时
@@ -9,13 +9,29 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v3.1 — 轻量任务执行规程
+# Project Task SOP v3.3 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.0 变更**：① 决策门 light/standard/full；② 实验记录收敛为单一 JSONL 事实源，人读视图按需渲染；③ 真实 CLI `sop.py` 取代虚构命令；④ 主文档瘦身，细节移至 `reference/`。
 > **v3.1 追加**：⑤ 教训沉淀条目（`## 教训:` + `sop.py lessons` 检索）；⑥ 上下文 token 账本（`mark-fresh` 自动记录估算）。
+> **v3.2 追加**：⑦ 启动前边界对齐门；⑧ 用户授权直接执行时记录关键假设。
+> **v3.3 追加**：⑨ 维度 9「项目级教训」——跨任务重复教训升级为常驻维度，会话启动即注入；所有任务类型必读。规则详见 `reference/project-lessons.md`。
 
-## 0. 决策门 — 每次任务先走这里
+## 0. 启动门 — 先判断是否适用，再对齐关键边界，最后决定流程
+
+- 任务 <5 分钟、纯问答、或无多会话价值 → **不适用本 skill，直接干活，不写任何文书。**
+
+### 0.1 边界对齐门（适用本 skill 的任务）
+
+开始产生交付物或改变状态的步骤前，先识别是否缺少会实质影响目标、范围、交付形式、验收标准、关键约束、风险等级或不可逆操作的关键边界信息。
+
+- 可通过项目文件、已有上下文或只读调查确认的，先查证并记录依据，不重复询问。
+- 仍无法确认的，集中列出会阻塞执行的用户决策问题，并尽量给出建议选项。
+- 关键边界明确前，不自行补全条件，不进入实现或正式产出阶段；只读调查不受限制。
+- 执行中新暴露的依赖性问题，可以继续询问。
+- 用户明确表示“先按你的理解执行/继续”或作出等价授权时，可解除等待，但须将关键假设记录到 `plan.md` 的 `assumptions`，并在交付时说明。
+
+### 0.2 决策门
 
 | 判断 | 模式 | 产出 | 适用 |
 |------|------|------|------|
@@ -26,14 +42,14 @@ disable-model-invocation: false
 - **light**：跳过步骤 3–4，直接执行。
 - **standard**：记录决策点，不做实验索引。
 - **full**：额外用 `sop.py record/dedup/render/check` 维护实验记录。
-- 任务 <5 分钟、纯问答、或无多会话价值 → **不适用本 skill，直接干活，不写任何文书。**
 
 ## 目录结构
 
 ```
 ai/
 ├── AGENTS.md                # 主索引：身份速览 + 维度摘要表 + 版本元数据
-├── context/                 # 8 个维度文件，头部含变更锚点（供 refresh 检测）
+├── context/                 # 9 个维度文件，头部含变更锚点（供 refresh 检测）
+│   └── 09-project-lessons.md# 项目级教训（跨任务复用，所有任务必读，详见 reference/project-lessons.md）
 ├── {task}/
 │   ├── plan.md              # 任务计划（必填字段见模板）
 │   ├── NOTES.md             # 决策点审计笔记（standard/full）
@@ -44,18 +60,20 @@ ai/
 ## 1. 读取/初始化上下文
 
 1. `read("ai/AGENTS.md")` — 索引（~500 tokens）。
-2. 按任务类型只读所需维度（索引内映射表：feature→1,2,7；bugfix→1,2,3,7；…）。
-3. 无 `ai/` → 在本 skill 根目录执行 `python sop.py init`，然后按输出清单并行填充 8 个维度文件。
+2. 按任务类型只读所需维度（索引内映射表：feature→1,2,7,9；bugfix→1,2,3,7,9；…）；**维度 9（项目级教训）所有任务必读**——开跑前先扫一遍是否命中已知坑。
+3. 无 `ai/` → 在本 skill 根目录执行 `python sop.py init`，然后按输出清单并行填充 9 个维度文件。
 4. 检测到相关文件变更 → `python sop.py refresh` 查看过期维度，重分析后 `--mark-fresh` 封存。
 
 ## 2. 定位任务计划 → plan.md
 
 - 必填：`task.id/title/type`、`objective`、`scope.included`、`acceptance`、`steps`。
+- 可选：`assumptions`，仅在用户授权跳过关键边界澄清时记录所采用的关键假设。
 - 缺失或字段不全 → 先补全再执行（light 可只写最小计划）。
 
 ## 3. 教训与实验（按模式）
 
 - **standard/full**：先读 `NOTES.md` 历史决策与「教训」条目；遇阻先 `python sop.py lessons <task> <关键词>` 检索历史教训，再决定方案。
+- **教训升级（维度 9）**：任务收尾复盘时，把 NOTES 中**满足升级门槛**（跨 ≥2 任务 + 与任务无关 + 环境/框架级）的教训补进 `context/09-project-lessons.md`（格式与维护见 `reference/project-lessons.md`），并同步 AGENTS.md 维度 9 摘要。
 - **full**：写实验前先 `sop.py dedup` 查重；追加用 `sop.py record`；给人看的报告用 `sop.py render`（按需生成，不落盘存储）。
 
 ## 4. 审计笔记（standard/full）
@@ -74,7 +92,7 @@ ai/
 
 | 命令 | 作用 |
 |------|------|
-| `python sop.py init [--root .]` | 初始化 ai/ 结构 + 8 维度文件 + AGENTS.md（含锚点） |
+| `python sop.py init [--root .]` | 初始化 ai/ 结构 + 9 维度文件 + AGENTS.md（含锚点） |
 | `python sop.py refresh [--mark-fresh]` | 按锚点哈希检测过期维度；重分析后 `--mark-fresh` 封存 |
 | `python sop.py dedup <task> -m <method> -p '<json>'` | 实验查重（`-p` 也可用 `-p k=v` 重复多次，规避 shell 引号问题） |
 | `python sop.py record <task> -m <method> -p '<json>' -r <result>` | 追加实验记录（同上） |
@@ -90,14 +108,17 @@ ai/
 
 - [ ] 按模式产出齐全：light→plan；standard→+NOTES；full→+`.experiments.jsonl` 且 `sop.py check` 通过
 - [ ] `ai/AGENTS.md` 反映当前项目状态，版本号已更新
+- [ ] 关键边界已对齐；如使用直接执行例外，`plan.md` 的 `assumptions` 已记录关键假设
 - [ ] 决策点均有 NOTES 记录，可追溯
 - [ ] 未重复已知失败的尝试；遇阻找到对策后已沉淀「教训」条目（dedup/lessons 已核对）
+- [ ] 本次满足升级门槛的教训已补入维度 9 并同步 AGENTS.md 摘要（如有）
 
 ## 参考文档（按需加载，勿常驻）
 
 - `reference/failure-modes.md` — 失败模式与恢复
 - `reference/edge-cases.md` — 边缘情况处理
 - `reference/tool-guide.md` — 工具使用指导
+- `reference/project-lessons.md` — **维度 9 项目级教训机制**（升级门槛/格式/维护）
 - `templates/` — 文件模板（`sop.py init` 自动引用）
 
 ## 版本历史
@@ -108,5 +129,7 @@ ai/
 | 2.0.0 | 2026-08-21 | 模块化上下文、双轨实验索引、增量刷新 |
 | 3.0.0 | 2026-08-23 | 决策门 light/standard/full；JSONL 单一事实源；真实 CLI sop.py；主文档瘦身；锚点哈希修复增量检测 |
 | 3.1.0 | 2026-08-23 | 教训沉淀条目 + sop.py lessons 检索；mark-fresh 自动记录上下文 token 估算 |
+| 3.2.0 | 2026-10-27 | 新增启动前边界对齐门；允许只读调查；直接执行例外须记录关键假设 |
+| 3.3.0 | 2026-10-28 | 维度 9「项目级教训」：跨任务重复教训升级为常驻维度（所有任务必读）；sop.py/模板/DIMS 同步；新增 reference/project-lessons.md |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

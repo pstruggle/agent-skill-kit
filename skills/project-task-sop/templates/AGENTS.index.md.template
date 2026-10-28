@@ -1,6 +1,6 @@
 # Project Context: {{projectName}}
 
-> 模块化上下文索引 — project-task-sop v3.1，生成于 {{timestamp}}
+> 模块化上下文索引 — project-task-sop v3.3，生成于 {{timestamp}}
 > 维护命令：`python sop.py init` / `python sop.py refresh [--mark-fresh]`
 
 ## 版本元数据
@@ -35,18 +35,19 @@
 | 6 | 依赖供应链 | `context/06-dependencies.md` | {{dim6Summary}} | deps/perf |
 | 7 | 架构模式 | `context/07-architecture.md` | {{dim7Summary}} | feature/bugfix/refactor/perf |
 | 8 | 开发工作流 | `context/08-dev-workflow.md` | {{dim8Summary}} | ci-cd/onboarding/feature |
+| 9 | 项目级教训 | `context/09-project-lessons.md` | {{dim9Summary}} | 所有 |
 
 ## 任务类型 → 维度映射
 
 | 任务类型 | 必读 | 可选 |
 |----------|------|------|
-| feature | 1,2,7 | 5,8 |
-| bugfix | 1,2,3,7 | 5 |
-| refactor | 1,2,3,7 | 5,6 |
-| deps | 2,6,5 | 1 |
-| ci-cd | 5,8,2 | 1,6 |
-| docs | 4,1 | 2 |
-| perf | 2,7,6,5 | 1,8 |
-| onboarding | 1–8 | – |
+| feature | 1,2,7,**9** | 5,8 |
+| bugfix | 1,2,3,7,**9** | 5 |
+| refactor | 1,2,3,7,**9** | 5,6 |
+| deps | 2,6,5,**9** | 1 |
+| ci-cd | 5,8,2,**9** | 1,6 |
+| docs | 4,1,**9** | 2 |
+| perf | 2,7,6,5,**9** | 1,8 |
+| onboarding | 1–9 | – |
 
-*由 project-task-sop v3.1 生成；维度摘要由 agent 在分析后回填；上下文估算由 refresh --mark-fresh 自动更新。*
+*由 project-task-sop v3.3 生成；维度摘要由 agent 在分析后回填；上下文估算由 refresh --mark-fresh 自动更新。*

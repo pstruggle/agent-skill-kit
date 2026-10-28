@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-project-task-sop CLI v3.1 — 轻量任务执行规程的机械部分。
+project-task-sop CLI v3.3 — 轻量任务执行规程的机械部分。
 
 职责边界：
 - 本脚本只做"机械"工作：脚手架、锚点哈希、实验查重、记录、渲染、校验、token 估算。
 - "语义"分析（架构判断、技术栈解读等）由 AI agent 完成；脚本输出清单引导 agent 填充维度文件。
 
 命令：
-  init               初始化 ai/ 结构与 8 个维度文件（含变更锚点）
+  init               初始化 ai/ 结构与 9 个维度文件（含变更锚点；#9 为项目级教训维度）
   refresh            按锚点哈希检测过期维度 [--mark-fresh 封存]
   dedup <task>       实验查重（精确哈希）
   record <task>      追加实验记录到 .experiments.jsonl
@@ -22,6 +22,7 @@ project-task-sop CLI v3.1 — 轻量任务执行规程的机械部分。
 - 变更检测基于"文件哈希锚点"（工作区感知，不依赖 git diff HEAD~1），修复 v2 检测不到未提交改动的问题。
 - 删除死模式（.git/ 前缀、endswith("docs/") 等）。
 - 实验记录收敛为单一 .experiments.jsonl 事实源，人读视图由 render 按需生成。
+- v3.3 新增维度 9（project-lessons）：项目级教训沉淀，跨任务复用，会话启动即注入。
 
 兼容：Python 3.8+，标准库，跨平台（Windows/macOS/Linux）。
 """
@@ -51,6 +52,7 @@ DIMENSIONS = [
     (6, "dependencies", "依赖与供应链"),
     (7, "architecture", "架构模式与模块划分"),
     (8, "dev-workflow", "开发工作流与环境"),
+    (9, "project-lessons", "项目级教训沉淀"),
 ]
 DIM_FILE = {num: "{:02d}-{}.md".format(num, key) for num, key, _ in DIMENSIONS}
 
@@ -88,14 +90,14 @@ ANCHOR_RULES = [
 ]
 
 TASK_TYPE_DIMS = {
-    "feature": ([1, 2, 7], [5, 8]),
-    "bugfix": ([1, 2, 3, 7], [5]),
-    "refactor": ([1, 2, 3, 7], [5, 6]),
-    "deps": ([2, 6, 5], [1]),
-    "ci-cd": ([5, 8, 2], [1, 6]),
-    "docs": ([4, 1], [2]),
-    "perf": ([2, 7, 6, 5], [1, 8]),
-    "onboarding": (list(range(1, 9)), []),
+    "feature": ([1, 2, 7, 9], [5, 8]),
+    "bugfix": ([1, 2, 3, 7, 9], [5]),
+    "refactor": ([1, 2, 3, 7, 9], [5, 6]),
+    "deps": ([2, 6, 5, 9], [1]),
+    "ci-cd": ([5, 8, 2, 9], [1, 6]),
+    "docs": ([4, 1, 9], [2]),
+    "perf": ([2, 7, 6, 5, 9], [1, 8]),
+    "onboarding": (list(range(1, 10)), []),
 }
 
 RELATED_DIMS = {
@@ -107,6 +109,7 @@ RELATED_DIMS = {
     6: [(2, "技术栈"), (5, "质量")],
     7: [(1, "拓扑"), (2, "技术栈")],
     8: [(5, "质量"), (2, "脚本语言")],
+    9: [(2, "技术栈"), (8, "工作流")],
 }
 
 # ai/ 为 skill 自身产物，不参与目录拓扑锚点
@@ -689,7 +692,7 @@ def cmd_dims(args) -> int:
 # ---------------------------------------------------------------------------
 BUILTIN_INDEX_TEMPLATE = """# Project Context: {{projectName}}
 
-> project-task-sop v3.1 | 生成于 {{timestamp}} | 版本 {{contextVersion}}
+> project-task-sop v3.3 | 生成于 {{timestamp}} | 版本 {{contextVersion}}
 
 ## 维度文件索引
 
@@ -703,6 +706,7 @@ BUILTIN_INDEX_TEMPLATE = """# Project Context: {{projectName}}
 | 6 | 依赖供应链 | context/06-dependencies.md |
 | 7 | 架构模式 | context/07-architecture.md |
 | 8 | 开发工作流 | context/08-dev-workflow.md |
+| 9 | 项目级教训 | context/09-project-lessons.md |
 """
 
 BUILTIN_DIM_TEMPLATE = """# Dimension {{dimensionNumber}}: {{dimensionTitle}}
@@ -721,10 +725,10 @@ BUILTIN_DIM_TEMPLATE = """# Dimension {{dimensionNumber}}: {{dimensionTitle}}
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v3.1")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v3.3")
     sub = p.add_subparsers(dest="cmd")
 
-    pi = sub.add_parser("init", help="初始化 ai/ 结构 + 8 个维度文件（含锚点）")
+    pi = sub.add_parser("init", help="初始化 ai/ 结构 + 9 个维度文件（含锚点）")
     pi.add_argument("--root", default=".", help="项目根目录（默认当前目录）")
     pi.add_argument("--project", default=None, help="项目名（默认取目录名）")
     pi.add_argument("--force", action="store_true", help="覆盖已有文件")
