@@ -7,6 +7,7 @@ v4 核心变更（2026-10-28，不兼容 v3.x）：
 - AGENTS.md 分区：生成区（<!-- SOP-GEN:BEGIN/END --> 之间）由 refresh --mark-fresh 重写；手工区（身份/任务记录/归档）sop 不碰。
 - 维度文件头部新增 `> **摘要**:`（agent 维护），索引表由 sop 读取聚合。
 - check 新增 --context：manifest 结构 + manifest↔context 一致性 + 锚点命中率校验。
+- v4.4：维度归属判定表下沉为 manifest.attribution（信息类型→维度 key，init 写入、项目可覆盖）；audit 的合法维度集合改从 attribution 读取，不再硬编码编号；check --context 校验 attribution 引用的 key 存在；migrate 生成默认 attribution。
 
 职责边界（沿用 v3）：
 - 本脚本只做"机械"工作：脚手架、锚点哈希、实验查重、记录、渲染、校验、token 估算。
@@ -23,6 +24,7 @@ v4 核心变更（2026-10-28，不兼容 v3.x）：
   lessons <task>     检索任务 NOTES.md 中的教训沉淀条目
   tokens <file...>   token 量估算（中文 ~1.5 字/token，英文 ~4 字/token）
   dims <task_type>   从 manifest 聚合查询任务类型的必读/可选维度
+  audit             维度归属审计：扫环境事实误入/跨维度重复/交叉引用失效（合法归属从 manifest attribution 读取；可疑点报告，判定按 §1.5 归属表）
   migrate            v3 → v4 半自动迁移：解析旧 sop.py 常量生成 manifest + 补维度摘要行
 
 兼容：Python 3.8+，标准库，跨平台（Windows/macOS/Linux）。
@@ -61,9 +63,23 @@ MANIFEST_NAME = "context.manifest.json"
 
 # init 时写入的内置建议集（9 维度，新项目可在此基础上增删）
 DEFAULT_MANIFEST = {
-    "_comment": "sop.py v4 维度体系声明（单一事实源）。id 决定编号与文件名 NN-key.md；anchors 为相对仓库根的 glob（[] = 手动维护，[\"@tree\"] = 目录树哈希）；tasks.must 含 \"*\" = 所有任务类型必读；onboarding 恒为全部维度。由 agent 维护，sop.py 只读。",
-    "version": 1,
+    "_comment": "sop.py v4 维度体系声明（单一事实源）。id 决定编号与文件名 NN-key.md；anchors 为相对仓库根的 glob（[] = 手动维护，[\"@tree\"] = 目录树哈希）；tasks.must 含 \"*\" = 所有任务类型必读；onboarding 恒为全部维度；attribution 为信息类型→维度 key 的归属表（§1.5，audit 读取；缺省按此表兜底）。由 agent 维护，sop.py 只读。",
+    "version": 2,
     "taskTypes": ["feature", "bugfix", "refactor", "deps", "ci-cd", "docs", "perf", "onboarding"],
+    # 归属表：信息类型 → 维度 key（§1.5 默认值；项目增删维度时同步调整。
+    # ui-conventions 内置建议集无对应维度，需要时由项目自定义并加入映射）。
+    "attribution": {
+        "env-facts": ["topology", "docs-assets", "dependencies", "dev-workflow"],
+        "tech-usage": ["tech-stack"],
+        "deps": ["dependencies"],
+        "topology": ["topology"],
+        "git": ["git-history"],
+        "docs": ["docs-assets"],
+        "quality": ["quality-system"],
+        "architecture": ["architecture"],
+        "ui-conventions": [],
+        "lessons": ["project-lessons"],
+    },
     "dimensions": [
         {"id": 1, "key": "topology", "title": "目录拓扑与关键文件",
          "anchors": ["@tree"],
@@ -623,6 +639,22 @@ def cmd_context_check(root: Path) -> int:
                 if t != "*" and t not in mf["taskTypes"]:
                     print("! 维度 {} tasks.{} 引用未知任务类型: {}".format(d, slot, t)); ok = False
 
+    # attribution 校验（v4.4+）：信息类型引用的维度 key 必须存在于 dimensions
+    attr = mf.get("attribution")
+    if attr is None:
+        print("! manifest 缺少 attribution（v4.4+ 字段：信息类型→维度 key 归属表，audit 依赖；建议按 §1.5 默认表补充）")
+        ok = False
+    elif not isinstance(attr, dict):
+        print("! attribution 必须是对象（信息类型 → 维度 key 列表）"); ok = False
+    else:
+        for info_type, dim_keys in attr.items():
+            if not isinstance(dim_keys, list) or not all(isinstance(x, str) for x in dim_keys):
+                print("! attribution.{} 必须是维度 key 字符串列表".format(info_type)); ok = False
+                continue
+            for k in dim_keys:
+                if k not in keys:
+                    print("! attribution.{} 引用未知维度 key: {}（须在 dimensions 声明）".format(info_type, k)); ok = False
+
     # 一致性：manifest 声明 ↔ 实际文件
     declared = {dim_file_name(d): d for d in mf["dimensions"]}
     for name in declared:
@@ -712,15 +744,115 @@ def cmd_dims(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 命令：audit（维度归属审计 — 可疑点报告，非自动判定）
+# ---------------------------------------------------------------------------
+
+# 元组：(标签, 正则) —— 合法维度集合由 manifest attribution["env-facts"] 决定（缺省按内置表兜底）。
+# 内置默认：环境事实可合法出现于 dev-workflow（工作流与环境）/dependencies（依赖）/topology/docs-assets（列项目路径属本职）。
+# 降噪：盘符路径只认反斜杠（避免把 https:// 的 "s:/" 当盘符）；IP 要求带端口（避免把 4 段版本号当 IP）。
+ENV_PATTERNS = [
+    ("盘符路径", re.compile(r"\b[A-Za-z]:\\")),
+    ("远程地址(IP:端口)", re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}")),
+    ("端口", re.compile(r":\d{2,5}\b")),
+    ("凭据词", re.compile(r"clientid|secret|密码|凭据", re.I)),
+    ("工具/产物路径", re.compile(r"\.jdks|\.m2|nvm|BtSoft|ruoyi-admin\.jar|\.env")),
+]
+
+
+def env_facts_legal_ids(mf: dict) -> set:
+    """env-facts 信息类型的合法维度 id 集合：按 manifest attribution 解析（key→id），缺省按内置表兜底。"""
+    attr = mf.get("attribution") or {}
+    keys = attr.get("env-facts")
+    if keys is None:
+        keys = DEFAULT_MANIFEST["attribution"]["env-facts"]
+    key_set = set(keys)
+    return {d["id"] for d in mf["dimensions"] if d.get("key") in key_set}
+
+# 提取"具体环境值"用于跨维度重复检测（IP 同样要求带端口，避免版本号当重复值）
+VALUE_RE = [
+    re.compile(r"(clientid|secret)\s*=\s*(\S+)", re.I),
+    re.compile(r"([A-Za-z]:\\[^\s,，；;|]+)"),
+    re.compile(r"((?:\d{1,3}\.){3}\d{1,3}:\d{2,5})"),
+]
+
+
+def cmd_audit(args) -> int:
+    root = Path(args.root).resolve()
+    mf = load_manifest(root)
+    if mf is None:
+        print("! {} 缺失，请先运行 `python sop.py init`".format(MANIFEST_NAME))
+        return 1
+    dim_text = {}
+    for dim in mf["dimensions"]:
+        f = dim_file_path(root, dim)
+        dim_text[dim["id"]] = f.read_text(encoding="utf-8") if f.is_file() else ""
+    issues = []
+
+    # 已裁决豁免（ai/.sop-audit-ignore.json）：命中但确认合理者（如教训内嵌必要事实），仅提示不入退出码
+    ignored_env = set()
+    ign = root / "ai" / ".sop-audit-ignore.json"
+    if ign.is_file():
+        try:
+            ignored_env = set(json.loads(ign.read_text(encoding="utf-8")).get("envFacts", []))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 1) 环境事实误入非法维度（合法集合来自 attribution；跳过头部元数据行 > ** ...）
+    legal_env = env_facts_legal_ids(mf)
+    for dim in mf["dimensions"]:
+        body = "\n".join(l for l in dim_text[dim["id"]].splitlines()
+                         if not l.lstrip().startswith("> **"))
+        hit_kinds = [name for name, pat in ENV_PATTERNS
+                     if dim["id"] not in legal_env and pat.search(body)]
+        if hit_kinds:
+            msg = "[环境事实→应归env-facts维度] dim {} {}：命中 {}".format(
+                dim["id"], dim["title"], ", ".join(hit_kinds))
+            if dim["id"] in ignored_env:
+                print("- " + msg + " 【已裁决豁免，见 ai/.sop-audit-ignore.json】")
+            else:
+                issues.append(msg)
+
+    # 2) 交叉引用失效（引用不存在的维度 id）
+    ref_re = re.compile(r"见\s*0?(\d{1,2})\s*维度|维度\s*0?(\d{1,2})")
+    valid_ids = {d["id"] for d in mf["dimensions"]}
+    for dim in mf["dimensions"]:
+        for m in ref_re.finditer(dim_text[dim["id"]]):
+            rid = int(next(g for g in m.groups() if g))
+            if rid not in valid_ids:
+                issues.append("[引用→维度{}不存在] dim {}：{}".format(rid, dim["id"], m.group(0)))
+
+    # 3) 跨维度重复的具体环境值
+    seen = {}
+    for dim in mf["dimensions"]:
+        for re_ in VALUE_RE:
+            for m in re_.finditer(dim_text[dim["id"]]):
+                v = (m.group(2) if m.lastindex == 2 else m.group(1)).rstrip("，,；;。")
+                if v:
+                    seen.setdefault(v, set()).add(dim["id"])
+    for v, dims in sorted(seen.items()):
+        if len(dims) > 1:
+            issues.append("[跨维度重复] {} 出现于 dim {}".format(
+                v, ",".join(str(d) for d in sorted(dims))))
+
+    if not issues:
+        print("✅ 未发现维度归属可疑点（{} 维度）".format(len(mf["dimensions"])))
+        return 0
+    for it in issues:
+        print("! " + it)
+    print("⚠ {} 处可疑点（按 SKILL.md §1.5 判定表人工裁决，`--check` 时发现问题退出码 1）".format(len(issues)))
+    return 1 if args.check else 0
+
+
+# ---------------------------------------------------------------------------
 # 命令：migrate（v3 → v4 半自动迁移，一次性工具）
 # ---------------------------------------------------------------------------
 
 
 MIGRATE_COMMENT = (
     "sop.py v4 维度体系声明（单一事实源）。id 决定编号与文件名 NN-key.md；anchors 为相对 codeRoot 的 glob"
-    "（[] = 手动维护，[\"@tree\"] = 目录树哈希）；tasks.must 含 \"*\" = 所有任务类型必读；onboarding 恒为全部维度。"
-    "由 agent 维护，sop.py 只读。本文件由 `sop.py migrate` 从旧版常量生成，请人工核对 codeRoot 与锚点噪音后再"
-    " refresh --mark-fresh。"
+    "（[] = 手动维护，[\"@tree\"] = 目录树哈希）；tasks.must 含 \"*\" = 所有任务类型必读；onboarding 恒为全部维度；"
+    "attribution 为信息类型→维度 key 归属表（audit 读取）。由 agent 维护，sop.py 只读。本文件由 `sop.py migrate`"
+    " 从旧版常量生成（attribution 为默认表），请人工核对 codeRoot、锚点噪音与归属后再 refresh --mark-fresh。"
 )
 
 
@@ -823,9 +955,11 @@ def build_manifest_from_v3(v3: dict, code_root: str, ai_dir: Path) -> dict:
     meta, _ = read_v3_index(ai_dir)
     return {
         "_comment": MIGRATE_COMMENT,
-        "version": 1,
+        "version": 2,
         "codeRoot": code_root,
         "taskTypes": task_types,
+        # 默认归属表（v4.4+）：audit 依赖；项目增删维度后按需调整
+        "attribution": json.loads(json.dumps(DEFAULT_MANIFEST["attribution"])),
         "dimensions": dimensions,
         "_index": {
             "version": meta.get("version", 1),
@@ -1226,6 +1360,10 @@ def build_parser() -> argparse.ArgumentParser:
     pdim.add_argument("task_type")
     pdim.add_argument("--root", default=".")
 
+    pau = sub.add_parser("audit", help="维度归属审计：扫环境事实误入/跨维度重复/交叉引用失效")
+    pau.add_argument("--root", default=".")
+    pau.add_argument("--check", action="store_true", help="发现问题时退出码非 0")
+
     pmig = sub.add_parser("migrate", help="v3 → v4 半自动迁移：解析旧 sop.py 常量生成 manifest + 补维度摘要行")
     pmig.add_argument("--root", default=".")
     pmig.add_argument("--old-sop", default=None,
@@ -1255,7 +1393,7 @@ def main(argv=None) -> int:
         "init": cmd_init, "refresh": cmd_refresh, "dedup": cmd_dedup,
         "record": cmd_record, "render": cmd_render, "check": cmd_check,
         "lessons": cmd_lessons, "tokens": cmd_tokens, "dims": cmd_dims,
-        "migrate": cmd_migrate,
+        "audit": cmd_audit, "migrate": cmd_migrate,
     }
     return handlers[args.cmd](args)
 

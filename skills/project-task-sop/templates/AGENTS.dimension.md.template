@@ -1,7 +1,8 @@
 # Dimension {{dimensionNumber}}: {{dimensionTitle}}
 
-> **维度元数据**：生成于 {{timestamp}} | 置信度 {{confidence}} | 技能 v3.2
+> **维度元数据**：生成于 {{timestamp}} | 置信度 {{confidence}} | 技能 v4.4
 > **变更锚点**: {{anchorsJson}}
+> **摘要**: 待分析
 
 ## 维度内容
 
@@ -11,4 +12,6 @@
 
 ## 相关维度
 
-{{relatedDimensions}}
+| 维度 | 关系 | 说明 |
+|------|------|------|
+{{relatedRows}}

@@ -1,53 +1,22 @@
 # Project Context: {{projectName}}
 
-> 模块化上下文索引 — project-task-sop v3.3，生成于 {{timestamp}}
+> project-task-sop v4.4 | manifest 驱动（ai/{{manifestName}}）| 生成于 {{timestamp}}
 > 维护命令：`python sop.py init` / `python sop.py refresh [--mark-fresh]`
 
-## 版本元数据
-
-| 字段 | 值 |
-|------|-----|
-| **版本** | {{contextVersion}} |
-| **完整刷新** | {{lastFullRefresh}} |
-| **最近增量刷新** | {{lastIncrementalRefresh}} |
-| **上下文估算** | {{contextTokens}} tokens |
+{{genSection}}
 
 ## 项目身份速览
 
 | 字段 | 值 |
 |------|-----|
-| 项目名称 | {{name}} |
-| 主语言 | {{primaryLanguage}} |
-| 包管理器 | {{packageManager}} |
-| 架构风格 | {{archStyle}} |
-| 分支模型 | {{branchingModel}} |
-| 任务运行器 | {{taskRunner}} |
+| 项目名称 | {{projectName}} |
+| 主语言 | 待分析 |
+| 包管理器 | 待分析 |
+| 架构风格 | 待分析 |
+| 分支模型 | 待分析 |
+| 任务运行器 | 待分析 |
 
-## 维度文件索引
+## 任务记录
 
-| # | 维度 | 文件 | 摘要 | 适用任务 |
-|---|------|------|------|----------|
-| 1 | 目录拓扑 | `context/01-topology.md` | {{dim1Summary}} | 所有 |
-| 2 | 技术栈 | `context/02-tech-stack.md` | {{dim2Summary}} | feature/bugfix/refactor/deps/perf |
-| 3 | Git 历史 | `context/03-git-history.md` | {{dim3Summary}} | bugfix/refactor/onboarding |
-| 4 | 文档资产 | `context/04-docs-assets.md` | {{dim4Summary}} | docs/onboarding |
-| 5 | 质量体系 | `context/05-quality-system.md` | {{dim5Summary}} | feature/refactor/perf/ci-cd |
-| 6 | 依赖供应链 | `context/06-dependencies.md` | {{dim6Summary}} | deps/perf |
-| 7 | 架构模式 | `context/07-architecture.md` | {{dim7Summary}} | feature/bugfix/refactor/perf |
-| 8 | 开发工作流 | `context/08-dev-workflow.md` | {{dim8Summary}} | ci-cd/onboarding/feature |
-| 9 | 项目级教训 | `context/09-project-lessons.md` | {{dim9Summary}} | 所有 |
-
-## 任务类型 → 维度映射
-
-| 任务类型 | 必读 | 可选 |
-|----------|------|------|
-| feature | 1,2,7,**9** | 5,8 |
-| bugfix | 1,2,3,7,**9** | 5 |
-| refactor | 1,2,3,7,**9** | 5,6 |
-| deps | 2,6,5,**9** | 1 |
-| ci-cd | 5,8,2,**9** | 1,6 |
-| docs | 4,1,**9** | 2 |
-| perf | 2,7,6,5,**9** | 1,8 |
-| onboarding | 1–9 | – |
-
-*由 project-task-sop v3.3 生成；维度摘要由 agent 在分析后回填；上下文估算由 refresh --mark-fresh 自动更新。*
+| 任务 | 目录 | 类型 | 状态 |
+|------|------|------|------|

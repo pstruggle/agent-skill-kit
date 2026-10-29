@@ -41,6 +41,7 @@
    - 任务映射反聚合：`TASK_TYPE_DIMS` → 各维度的 `tasks.must/optional`；`taskTypes` = 旧键列表。
    - `related` 沿用 `RELATED_DIMS`。
    - `_index`：版本号从旧 AGENTS.md 版本元数据提取（保证与历史连续），完整刷新时间同理；提取失败给占位。
+   - `attribution`：写入默认归属表（信息类型→维度 key，见 SKILL.md §1.5；audit 依赖），迁移后按项目实际维度增删调整。
 3. **补维度文件头部摘要**：从旧 AGENTS.md 索引表逐行提取摘要，写入各 `context/NN-key.md` 的 `> **摘要**:`（变更锚点行之后；已存在则跳过）。
 4. **AGENTS.md 分区改造**：剔除旧文件的生成区段（版本元数据 / 维度索引 / 任务映射表）与头部，保留手工区（身份速览 / 任务记录 / 归档），组装为 v4 结构（生成区 marker 占位，由下一步 refresh 填充）。
 5. **提示未登记维度文件**（旧索引有、旧常量没有的维度，如迁移中途新增的），由人工决定在 manifest 补条目或归档。
@@ -57,7 +58,7 @@
 | 3 | 写 manifest | `python sop.py migrate --root <root> --old-sop <旧sop> --code-root <代码根>`（先 `--dry-run` 预览） |
 | 4 | 摘要迁移 | migrate 自动完成（从旧索引表提取）；全手工则逐个 `context/NN-key.md` 在变更锚点行后补 `> **摘要**:` |
 | 5 | AGENTS.md 分区 | migrate 自动完成；全手工则把生成区段删掉、手工区内容搬到 marker 之外 |
-| 6 | 人工核对 | **codeRoot** 是否正确；泛化锚点噪音（`logs`、`uni_modules` 等是否被纳入，必要时改精确路径）；未登记维度文件的去留；手工区内容是否完整 |
+| 6 | 人工核对 | **codeRoot** 是否正确；泛化锚点噪音（`logs`、`uni_modules` 等是否被纳入，必要时改精确路径）；未登记维度文件的去留；**`attribution` 归属与项目维度是否匹配**（增删过维度则同步）；手工区内容是否完整 |
 | 7 | 封存与验收 | `sop.py check --context` → `sop.py refresh --mark-fresh`（版本 +1、生成区填充）→ 二次 `refresh`（应全部「最新」）→ `sop.py dims <type>` 抽查与旧映射一致 |
 | 8 | 收尾 | 手工区核对（身份速览 / 任务记录 / 归档）；如迁移中途新增过维度，按提示在 manifest 补条目并 refresh |
 
