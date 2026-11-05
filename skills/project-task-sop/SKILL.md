@@ -167,6 +167,7 @@ ai/
 - `reference/tool-guide.md` — 工具使用指导
 - `reference/project-lessons.md` — **维度 9 项目级教训机制**（升级门槛/格式/维护）
 - `reference/migration-v3-to-v4.md` — **v3 → v4 迁移指南**（分步操作/验收清单/已知坑，配合 `sop.py migrate`）
+- `reference/process-flow-convergence.md` — **流程收敛（聚合思维）**：仅流程梳理/再造类任务读取；流程要素筛选判定表 + 流程梳理表模板
 - `templates/` — 文件模板（`sop.py init` 自动引用）
 
 ## 版本历史
@@ -184,5 +185,6 @@ ai/
 | 4.2.0 | 2026-10-29 | **维度归属判定表**（§1.5，信息类型→维度 + 反例排除，唯一权威）；`sop.py audit` 子命令（扫环境事实误入教训维度/跨维度重复/交叉引用失效）；09 维度门槛补反例排除 |
 | 4.3.0 | 2026-10-29 | **对抗自查清单**（§0.1.1，分级触发、挂边界对齐门后、力度由决策门决定）；NOTES 决策点前置自查；DoD 新增对抗自查验收项 |
 | 4.4.0 | 2026-10-29 | **归属判定动态化**：§1.5 表下沉为 manifest `attribution`（信息类型→维度 key，init 写入、可覆盖，audit 从它读取）；audit 合法维度集合不再硬编码编号；check --context 校验 attribution 引用的 key 存在；migrate 生成默认 attribution |
+| 4.5.0 | 2026-10-29 | **流程收敛参考**：新增 reference/process-flow-convergence.md（聚合思维工具，仅流程梳理/再造类任务按需加载；含流程要素筛选判定表 + 流程梳理表模板）；参考文档列表登记 |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*
