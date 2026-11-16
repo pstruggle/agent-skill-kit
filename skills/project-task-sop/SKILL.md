@@ -9,7 +9,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.7.3 — 轻量任务执行规程
+# Project Task SOP v4.7.4 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -203,5 +203,6 @@ ai/
 | 4.7.1 | 2026-11-16 | **入口落点决策门**：`sop.py entry` 生成前必须由人确认落点（仓根 / 与 `ai/` 同级 / 项目自定义路径），结论记入 `plan.md` 的 assumptions 或 NOTES；工具打印「entry 落点: …（仓库内/仓库外）」并在「ai/ 在仓库外 + 落点仍在仓库内」时额外提示断链风险；`reference/repo-entry-file.md` 新增 §2.1 落点判据表与询问话术，形态表补「薄壳 + 全量并存」 |
 | 4.7.2 | 2026-11-16 | **存量项目接入台账**：`sop.py tasks --backfill [--dry-run] [--status S] [--no-suggest]`——给缺台账字段的老 `plan.md` 幂等补行；`status` 仅在 `NOTES.md` 有验收/收工证据时推断 `done`，其余落缺省并列入「需人工确认」；`updated` 取 plan.md mtime；跨任务关系建议只打印不写入；`reference/task-ledger.md` 新增「存量项目接入」小节 |
 | 4.7.3 | 2026-11-16 | **文档与元数据同步**：frontmatter `description` 补齐 `entry/tasks/migrate` 与两个新增能力关键词（原描述缺入口与台账，技能目录匹配不到）；`sop.py` docstring 命令清单补 `entry`/`tasks`、版本号 4.0 → 4.7.3（`--help` 与 docstring 口径一致）；README 补 42 用例数、`LICENSE`、`reference/`/`templates/` 数量、`tasks --backfill --dry-run` 提示、`ai/` 与 `.experiments.jsonl` 被 gitignore 的说明（入口为何不能放仓内的原因链）|
+| 4.7.4 | 2026-11-17 | **CI 与版本同步守卫**：新增 `.github/workflows/test.yml`（ubuntu/windows × Python 3.9/3.13，跑 stdlib 回归 + `sop.py --help` 烟测；`check --context`/`entry`/`tasks` 四道门依赖 `ai/`，不进 CI）；新增 `tests/test_version_sync.py` 把版本漂移变成红灯——五处版本号（SKILL 标题 / 历史表末行 / README 技能表 / docstring / `--help`）必须相同、历史表必须升序无重复、frontmatter `description` 必须列出全部子命令；docstring 兼容性声明由 Python 3.8+ 修正为 3.9+ |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

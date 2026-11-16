@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.7.3 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.7.4 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -29,7 +29,7 @@ v4 核心变更（2026-10-28，不兼容 v3.x）：
   audit             维度归属审计：扫环境事实误入/跨维度重复/交叉引用失效（合法归属从 manifest attribution 读取；可疑点报告，判定按 §1.5 归属表）
   migrate            v3 → v4 半自动迁移：解析旧 sop.py 常量生成 manifest + 补维度摘要行
 
-兼容：Python 3.8+，标准库，跨平台（Windows/macOS/Linux）。
+兼容：Python 3.9+（用到 Path.is_relative_to），纯标准库，跨平台（Windows/macOS/Linux）。
 """
 from __future__ import annotations
 
@@ -1993,7 +1993,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.7.3（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.7.4（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")

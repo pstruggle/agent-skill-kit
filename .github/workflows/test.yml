@@ -1,0 +1,45 @@
+name: tests
+
+# 目标：在干净 checkout 上验证 sop.py 与文档不漂。
+# 注意：`check --context` / `entry --check` / `tasks --check` 依赖项目自己的 ai/ 目录，
+# 而 ai/ 被 .gitignore 忽略（不随仓库分发），所以这四道门无法在 CI 里跑——它们是使用者本地的门。
+# CI 只跑"仓库自身即事实源"的部分：单元/CLI 回归 + 版本同步校验 + 入口烟测。
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: py${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: 回归测试（stdlib unittest，零第三方依赖）
+        run: python -m unittest discover -s tests -v
+
+      - name: CLI 烟测
+        run: |
+          python skills/project-task-sop/sop.py --help
+
+      - name: 版本同步校验（单独跑，失败信息更清楚）
+        run: python -m unittest tests.test_version_sync -v
