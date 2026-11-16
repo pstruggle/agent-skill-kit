@@ -11,15 +11,16 @@ agent-skill-kit/
 ├─ install.ps1           # Windows / PowerShell 安装器
 ├─ install.sh            # macOS / Linux 安装器
 ├─ tests/
-│  └─ test_sop.py        # sop.py 命令行回归测试（标准库 unittest，无第三方依赖）
+│  └─ test_sop.py        # sop.py 命令行回归测试（42 用例，标准库 unittest，无第三方依赖）
 ├─ skills/               # 唯一事实源：每个技能一个目录
 │  └─ project-task-sop/
 │     ├─ SKILL.md
 │     ├─ sop.py
-│     ├─ reference/
-│     └─ templates/
+│     ├─ reference/      # 8 篇按需加载的规范（入口 / 台账 / 教训 / 迁移 …）
+│     └─ templates/      # 4 个产物模板（plan / NOTES / 索引 / 维度）
 ├─ .gitattributes        # 统一 LF、UTF-8
-└─ .gitignore            # 忽略各 Agent 的本地安装产物
+├─ .gitignore            # 忽略各 Agent 的本地安装产物 + 项目 ai/ 上下文
+└─ LICENSE               # MIT
 ```
 
 > 仓库内不放 `AGENTS.md`。`ai/` 上下文目录不进版本库，仓根入口会指向不存在的文件；
@@ -29,12 +30,12 @@ agent-skill-kit/
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、模块化上下文索引、任务台账（状态+关联）、JSONL 实验去重、教训检索、决策点审计笔记 | 4.7.2 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记 | 4.7.3 |
 
 ## 回归测试
 
 ```sh
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -v      # 42 用例，约 27 s，全部在临时目录里跑
 ```
 
 `sop.py` 是纯标准库实现的单文件 CLI，改完至少跑一遍：
@@ -45,6 +46,8 @@ python skills/project-task-sop/sop.py refresh --mark-fresh --root <项目根>
 python skills/project-task-sop/sop.py audit --root <项目根>
 python skills/project-task-sop/sop.py entry --check --root <项目根>
 python skills/project-task-sop/sop.py tasks --check --root <项目根>
+# 存量项目首次接入台账（先预览，确认后再落盘）
+python skills/project-task-sop/sop.py tasks --backfill --dry-run --root <项目根>
 ```
 
 测试全部在临时目录里跑，不会碰到你自己的 `ai/` 上下文目录。
@@ -143,6 +146,7 @@ python <skill-installer>/scripts/install-skill-from-github.py \
 ## 设计约定
 
 - `skills/` 是唯一事实源；`.dsh/`、`.codex/`、`.claude/`、`.agents/` 都是安装产物，已在 `.gitignore` 中排除。
+- `ai/` 与 `.experiments.jsonl` 同样在 `.gitignore` 里：上下文体系统一留在项目目录、不随仓库分发——这也是「仓库内不放 `AGENTS.md`」的原因（仓根入口会指向 clone 者看不到的 `ai/context`）。
 - `link` 模式便于边改边用；`copy` 模式便于固定版本、避免被测 Agent 直接改到源文件。
 - 所有文本文件按 LF 存储、UTF-8 无 BOM 编码（见 `.gitattributes`），中文内容在 Windows 下也不会乱码。
 - 安装脚本只操作目标根目录之下的路径，越界即报错退出。
@@ -158,6 +162,8 @@ cd agent-skill-kit
 ```
 
 Run `--list` to see the skills and destinations, `--mode link` to symlink instead of copy, `--uninstall` to remove, `--help` for the full flag list.
+
+Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/test_sop.py` (stdlib `unittest`, 42 cases).
 
 ## 许可证
 

@@ -1,6 +1,6 @@
 ---
 name: project-task-sop
-description: 轻量项目任务执行规程：启动前边界对齐、规模决策门（light/standard/full）、模块化上下文索引（manifest 驱动）、JSONL 实验去重记录、教训检索、决策点审计笔记、维度归属判定表；sop.py 提供 init/refresh/dedup/record/render/check/lessons/tokens/dims/audit
+description: 轻量项目任务执行规程：启动前边界对齐、规模决策门（light/standard/full）、模块化上下文索引（manifest 驱动）、任务台账（plan.md 字段聚合 + 存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重记录、教训检索、决策点审计笔记、维度归属判定表；sop.py 提供 init/refresh/entry/tasks/dedup/record/render/check/lessons/tokens/dims/audit/migrate
 whenToUse:
   - 开始新的项目任务前
   - 需要避免重复已知失败的尝试时
@@ -9,7 +9,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.7.2 — 轻量任务执行规程
+# Project Task SOP v4.7.3 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -202,5 +202,6 @@ ai/
 | 4.7.0 | 2026-11-15 | **任务台账**：新增 `sop.py tasks`（扫 `ai/*/plan.md` 字段表 status/parent/depends/relates/supersedes/updated → 渲染 `ai/TASKS.md`；`--check` 校验状态枚举/id 唯一/引用存在/depends 成环/台账与 plan.md 同步）；`refresh --mark-fresh` 顺带同步、`check --context` 顺带告警；plan 模板加台账字段；`entry.file` 支持 `../AGENTS.md`（入口放到 ai 同级，ai 不进版本库时的推荐形态）；含 `reference/task-ledger.md` |
 | 4.7.1 | 2026-11-16 | **入口落点决策门**：`sop.py entry` 生成前必须由人确认落点（仓根 / 与 `ai/` 同级 / 项目自定义路径），结论记入 `plan.md` 的 assumptions 或 NOTES；工具打印「entry 落点: …（仓库内/仓库外）」并在「ai/ 在仓库外 + 落点仍在仓库内」时额外提示断链风险；`reference/repo-entry-file.md` 新增 §2.1 落点判据表与询问话术，形态表补「薄壳 + 全量并存」 |
 | 4.7.2 | 2026-11-16 | **存量项目接入台账**：`sop.py tasks --backfill [--dry-run] [--status S] [--no-suggest]`——给缺台账字段的老 `plan.md` 幂等补行；`status` 仅在 `NOTES.md` 有验收/收工证据时推断 `done`，其余落缺省并列入「需人工确认」；`updated` 取 plan.md mtime；跨任务关系建议只打印不写入；`reference/task-ledger.md` 新增「存量项目接入」小节 |
+| 4.7.3 | 2026-11-16 | **文档与元数据同步**：frontmatter `description` 补齐 `entry/tasks/migrate` 与两个新增能力关键词（原描述缺入口与台账，技能目录匹配不到）；`sop.py` docstring 命令清单补 `entry`/`tasks`、版本号 4.0 → 4.7.3（`--help` 与 docstring 口径一致）；README 补 42 用例数、`LICENSE`、`reference/`/`templates/` 数量、`tasks --backfill --dry-run` 提示、`ai/` 与 `.experiments.jsonl` 被 gitignore 的说明（入口为何不能放仓内的原因链）|
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

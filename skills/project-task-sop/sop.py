@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.0 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.7.3 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -16,6 +16,8 @@ v4 核心变更（2026-10-28，不兼容 v3.x）：
 命令：
   init               初始化 ai/ 结构与维度文件（manifest 缺失时写入内置 9 维度建议集）
   refresh            按 manifest 锚点检测过期维度 [--mark-fresh 封存 + 重写 AGENTS.md 生成区]
+  entry              生成/校验仓库入口文件（生成区=纪律索引+任务路由，手写区不动；--check 5 条 lint）
+  tasks              任务台账：扫各任务 plan.md 字段表聚合 ai/TASKS.md [--check 校验 / --backfill 存量补录]
   check --context    manifest 结构 + 一致性 + 锚点命中校验（check <task> 仍为 JSONL 校验）
   dedup <task>       实验查重（精确哈希）
   record <task>      追加实验记录到 .experiments.jsonl
@@ -1991,7 +1993,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.0（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.7.3（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")
