@@ -9,7 +9,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.4 — 轻量任务执行规程
+# Project Task SOP v4.7.2 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -65,6 +65,7 @@ disable-model-invocation: false
 ai/
 ├── context.manifest.json   # 单一事实源：维度体系声明（id/key/title/anchors/tasks/related/attribution/codeRoot）
 ├── AGENTS.md                # 主索引：生成区（版本/索引表/映射表，sop 重写）+ 手工区（身份/任务记录）
+├── TASKS.md                 # 任务台账：状态 + 相互关联（`sop.py tasks` 生成，禁止手改）
 ├── context/                 # 维度文件（数量 = manifest 声明，头部含变更锚点 + 摘要）
 │   └── 09-project-lessons.md# 项目级教训（跨任务复用，所有任务必读，详见 reference/project-lessons.md）
 ├── {task}/
@@ -79,8 +80,12 @@ ai/
 1. `read("ai/AGENTS.md")` — 索引（生成区为当前维度体系快照）。
 2. 按任务类型只读所需维度（索引内映射表由 manifest 聚合：feature→1,2,7,9,10；bugfix→1,2,3,7,9；…）；**维度 9（项目级教训）所有任务必读**——开跑前先扫一遍是否命中已知坑。
 3. 无 `ai/` 或 `ai/context.manifest.json` 缺失 → 在本 skill 根目录执行 `python sop.py init`（写入内置 9 维度建议集 manifest），然后按 manifest 填充维度文件。
-4. 检测到相关文件变更 → `python sop.py refresh` 查看过期维度，重分析后 `--mark-fresh` 封存（同时重写 AGENTS.md 生成区）。
+4. 检测到相关文件变更 → `python sop.py refresh` 查看过期维度，重分析后 `--mark-fresh` 封存（同时重写 AGENTS.md 生成区）；只复核了部分维度时用 `--mark-fresh --only 12,13`，避免把没复核的维度一起封存成"最新"。
 5. 新增/调整维度：直接编辑 `ai/context.manifest.json`（增删 dimensions 条目 + 同步 `attribution` 归属表 + 建/删对应 `context/NN-key.md`），再 `python sop.py check --context` 校验、`refresh --mark-fresh` 封存。**无需改 sop.py 代码。**
+6. 需要仓库入口文件（`AGENTS.md` / 类似物）时，**先定落点，再生成——落点不许默认**：
+   1. **询问落点**（三选一，等用户明确答复再动手）：① 仓库根 `codeRoot/AGENTS.md`；② 与 `ai/` 同级（`entry.file = "../AGENTS.md"`）；③ 项目更合适的位置（子项目根 / monorepo 包根等，写相对 `codeRoot` 的路径）。判据与代价见 `reference/repo-entry-file.md` §2.1。
+   2. **记录结论**：把落点与理由（谁会读它、`ai/` 是否进版本库）写进 `plan.md` 的 `assumptions` 或 NOTES 决策点；没有这段记录=没确认过落点。
+   3. **再生**：manifest 加 `entry`（可选，`file` 空 = 不启用）+ 维度加 `entryHint`（一条 ≤1 行纪律摘要），`python sop.py entry` 生成、`entry --check` 校验。**入口只做指向，规则正文留在维度**——详见 `reference/repo-entry-file.md`。
 
 ## 1.5 维度归属判定（信息该进哪个维度）— 默认归属表，可由 manifest 覆盖
 
@@ -110,7 +115,8 @@ ai/
 
 - 必填：`task.id/title/type`、`objective`、`scope.included`、`acceptance`、`steps`。
 - 可选：`assumptions`，仅在用户授权跳过关键边界澄清时记录所采用的关键假设。
-- 缺失或字段不全 → 先补全再执行（light 可只写最小计划）。
+- **台账字段**（`status` / `parent` / `depends` / `relates` / `supersedes` / `updated`）：写在 plan.md 顶部字段表，由 `sop.py tasks` 聚合到 `ai/TASKS.md`。开任务写 `status: doing|pending`，收工改 `done` + `updated`；要让对方挡住我用 `depends`，只是同主题用 `relates`（详见 `reference/task-ledger.md`）。
+- 缺失或字段不全 → 先补全再执行（light 可只写最小计划；台账字段缺失只会告警，不阻塞执行）。
 
 ## 3. 教训与实验（按模式）
 
@@ -136,8 +142,10 @@ ai/
 | 命令 | 作用 |
 |------|------|
 | `python sop.py init [--root .]` | 初始化 ai/ 结构：manifest 缺失时写入内置 9 维度建议集 + 生成维度骨架 + AGENTS.md |
-| `python sop.py refresh [--mark-fresh]` | 按 manifest 锚点检测过期维度；`--mark-fresh` 封存锚点 + 版本递增 + 重写 AGENTS.md 生成区 |
-| `python sop.py check --context [--root .]` | 校验 manifest 结构 / manifest↔context 一致性 / 锚点命中率 |
+| `python sop.py refresh [--mark-fresh] [--only 12,13]` | 按 manifest 锚点检测过期维度；`--mark-fresh` 封存锚点 + 版本递增 + 重写 AGENTS.md 生成区；`--only` 只封存指定维度（id 或 key，逗号/空格分隔），其余维度保持旧锚点 |
+| `python sop.py check --context [--root .]` | 校验 manifest 结构 / manifest↔context 一致性 / 锚点命中率；启用 `entry` 时顺带做入口文件 lint（告警不阻塞） |
+| `python sop.py entry [--check] [--force] [--out 路径]` | 按 manifest `entry` + 各维度 `entryHint` 生成/刷新仓库入口文件（生成区=纪律索引+任务路由+维护契约；手写区不动）；`--check` 校验行数/权威声明/凭据/时效状态/生成区是否同步 |
+| `python sop.py tasks [--check] [--backfill [--dry-run] [--status S] [--no-suggest]] [--out 路径]` | 任务台账：扫 `ai/*/plan.md` 字段表（status/parent/depends/relates/supersedes/updated）聚合为 `ai/TASKS.md`；`--check` 校验状态枚举/id 唯一/引用存在/成环 + 台账是否与 plan.md 同步；`--backfill` 存量接入：给缺台账字段的老 plan.md 补行（**先 `--dry-run` 预览**，缺省 `pending` 并列入「需人工确认」，NOTES 有验收记录才推断 `done`，只打印关系建议不写入） |
 | `python sop.py dedup <task> -m <method> -p '<json>'` | 实验查重（`-p` 也可用 `-p k=v` 重复多次，规避 shell 引号问题） |
 | `python sop.py record <task> -m <method> -p '<json>' -r <result>` | 追加实验记录（同上） |
 | `python sop.py render <task> [--out f.md]` | 从 JSONL 渲染人读报告 |
@@ -168,6 +176,8 @@ ai/
 - `reference/project-lessons.md` — **维度 9 项目级教训机制**（升级门槛/格式/维护）
 - `reference/migration-v3-to-v4.md` — **v3 → v4 迁移指南**（分步操作/验收清单/已知坑，配合 `sop.py migrate`）
 - `reference/process-flow-convergence.md` — **流程收敛（聚合思维）**：仅流程梳理/再造类任务读取；流程要素筛选判定表 + 流程梳理表模板
+- `reference/repo-entry-file.md` — **仓库入口文件（AGENTS.md 等）通用规范**：三种入口形态选型 / `entry`+`entryHint` 启用步骤 / 生成区与手写区分工 / 5 条 lint / 常见反模式 / 迁移检查表（仅做入口文件时读）
+- `reference/task-ledger.md` — **任务台账机制**：字段词表（status/parent/depends/relates/supersedes）/ 校验规则 / 开任务与收工流程 / **存量项目接入（`tasks --backfill`）** / 与 AGENTS.md 手写表的分工 / 常见反模式（开任务、收工、接管老项目时读）
 - `templates/` — 文件模板（`sop.py init` 自动引用）
 
 ## 版本历史
@@ -186,5 +196,11 @@ ai/
 | 4.3.0 | 2026-10-29 | **对抗自查清单**（§0.1.1，分级触发、挂边界对齐门后、力度由决策门决定）；NOTES 决策点前置自查；DoD 新增对抗自查验收项 |
 | 4.4.0 | 2026-10-29 | **归属判定动态化**：§1.5 表下沉为 manifest `attribution`（信息类型→维度 key，init 写入、可覆盖，audit 从它读取）；audit 合法维度集合不再硬编码编号；check --context 校验 attribution 引用的 key 存在；migrate 生成默认 attribution |
 | 4.5.0 | 2026-10-29 | **流程收敛参考**：新增 reference/process-flow-convergence.md（聚合思维工具，仅流程梳理/再造类任务按需加载；含流程要素筛选判定表 + 流程梳理表模板）；参考文档列表登记 |
+| 4.5.1 | 2026-11-15 | **锚点抽样修复**：`anchor_sources()` 不再"字母序前 20 个即 return"静默截断（大目录里排在后面的文件永不参与过期检测），改为**全量命中后均匀抽样 + 显式告警**，并支持维度字段 `anchorLimit`（0=不设上限）覆盖默认 20；**`refresh --only`** 支持按维度选择性封存（此前 `--mark-fresh` 只能全局封存，与"只看某维度"的复核纪律冲突） |
+| 4.5.2 | 2026-11-15 | **锚点扫描性能修复**：`glob_hits()` 改为**先剪枝的 `os.walk` + fnmatch 匹配**（按 codeRoot 缓存，全部维度共用一次遍历）；此前 `glob.glob(recursive=True)` 先遍历全树再过滤 `IGNORED_DIRS`，在含 `node_modules` 的单仓上单次 glob 即卡死数分钟，`check --context` / `refresh` 实际不可用。语义保持：返回相对 codeRoot 的 posix 排序列表、跳过忽略目录、`**/x` 同时匹配根级 x |
+| 4.6.0 | 2026-11-15 | **仓库入口文件通用能力**：新增 `sop.py entry`（`--check/--force/--out`）——由 manifest 可选 `entry` 配置 + 各维度可选 `entryHint` 渲染入口文件生成区（纪律索引 + 任务→维度路由 + 维护契约），手写区（`ENTRY-MANUAL`）不受影响；`--check` 做 5 条 lint（行数上限/权威声明/凭据关键词/绝对家目录/时效性状态 + 超长行告警）；`check --context` 顺带告警。含 `reference/repo-entry-file.md`（通用规范，零项目信息） |
+| 4.7.0 | 2026-11-15 | **任务台账**：新增 `sop.py tasks`（扫 `ai/*/plan.md` 字段表 status/parent/depends/relates/supersedes/updated → 渲染 `ai/TASKS.md`；`--check` 校验状态枚举/id 唯一/引用存在/depends 成环/台账与 plan.md 同步）；`refresh --mark-fresh` 顺带同步、`check --context` 顺带告警；plan 模板加台账字段；`entry.file` 支持 `../AGENTS.md`（入口放到 ai 同级，ai 不进版本库时的推荐形态）；含 `reference/task-ledger.md` |
+| 4.7.1 | 2026-11-16 | **入口落点决策门**：`sop.py entry` 生成前必须由人确认落点（仓根 / 与 `ai/` 同级 / 项目自定义路径），结论记入 `plan.md` 的 assumptions 或 NOTES；工具打印「entry 落点: …（仓库内/仓库外）」并在「ai/ 在仓库外 + 落点仍在仓库内」时额外提示断链风险；`reference/repo-entry-file.md` 新增 §2.1 落点判据表与询问话术，形态表补「薄壳 + 全量并存」 |
+| 4.7.2 | 2026-11-16 | **存量项目接入台账**：`sop.py tasks --backfill [--dry-run] [--status S] [--no-suggest]`——给缺台账字段的老 `plan.md` 幂等补行；`status` 仅在 `NOTES.md` 有验收/收工证据时推断 `done`，其余落缺省并列入「需人工确认」；`updated` 取 plan.md mtime；跨任务关系建议只打印不写入；`reference/task-ledger.md` 新增「存量项目接入」小节 |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

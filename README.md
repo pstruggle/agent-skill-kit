@@ -10,6 +10,8 @@
 agent-skill-kit/
 ├─ install.ps1           # Windows / PowerShell 安装器
 ├─ install.sh            # macOS / Linux 安装器
+├─ tests/
+│  └─ test_sop.py        # sop.py 命令行回归测试（标准库 unittest，无第三方依赖）
 ├─ skills/               # 唯一事实源：每个技能一个目录
 │  └─ project-task-sop/
 │     ├─ SKILL.md
@@ -20,11 +22,33 @@ agent-skill-kit/
 └─ .gitignore            # 忽略各 Agent 的本地安装产物
 ```
 
+> 仓库内不放 `AGENTS.md`。`ai/` 上下文目录不进版本库，仓根入口会指向不存在的文件；
+> 入口文件（`sop.py entry` 生成）放在**项目目录、与 `ai/` 同级**，见 `reference/repo-entry-file.md`。
+
 ## 包含的技能
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、模块化上下文索引、JSONL 实验去重、教训检索、决策点审计笔记 | 3.1.0 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、模块化上下文索引、任务台账（状态+关联）、JSONL 实验去重、教训检索、决策点审计笔记 | 4.7.2 |
+
+## 回归测试
+
+```sh
+python -m unittest discover -s tests -v
+```
+
+`sop.py` 是纯标准库实现的单文件 CLI，改完至少跑一遍：
+
+```sh
+python skills/project-task-sop/sop.py check --context --root <项目根>
+python skills/project-task-sop/sop.py refresh --mark-fresh --root <项目根>
+python skills/project-task-sop/sop.py audit --root <项目根>
+python skills/project-task-sop/sop.py entry --check --root <项目根>
+python skills/project-task-sop/sop.py tasks --check --root <项目根>
+```
+
+测试全部在临时目录里跑，不会碰到你自己的 `ai/` 上下文目录。
+
 
 ## 安装
 

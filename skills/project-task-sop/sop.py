@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import argparse
 import ast
-import glob as globmod
+import fnmatch
 import hashlib
 import json
 import os
@@ -80,6 +80,10 @@ DEFAULT_MANIFEST = {
         "ui-conventions": [],
         "lessons": ["project-lessons"],
     },
+    # 仓库入口文件（可选，通用能力）：file 为空 = 不启用。
+    # 启用后 `sop.py entry` 在 codeRoot/file 下维护生成区（纪律索引 + 任务路由 + 维护契约），
+    # 手写区（架构概览/易踩空点）不受影响；`entry --check` 校验行数/权威声明/凭据/时效状态。
+    "entry": {"file": "", "maxLines": 45, "title": ""},
     "dimensions": [
         {"id": 1, "key": "topology", "title": "目录拓扑与关键文件",
          "anchors": ["@tree"],
@@ -275,22 +279,41 @@ def dim_file_path(root: Path, dim: dict) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _walk_files(root: Path) -> list:
+    """剪枝后的完整文件列表（相对 posix 串，已排序）；按代码根缓存，供全部维度锚点共用一次遍历。"""
+    key = str(root.resolve())
+    cached = _WALK_CACHE.get(key)
+    if cached is not None:
+        return cached
+    root_s = str(root.resolve())
+    files = []
+    for dirpath, dirnames, filenames in os.walk(root_s):
+        dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS)
+        for fn in filenames:
+            rel = os.path.relpath(os.path.join(dirpath, fn), root_s).replace(os.sep, "/")
+            files.append(rel)
+    files.sort()
+    _WALK_CACHE[key] = files
+    return files
+
+
+def _match_glob(rel: str, pattern: str) -> bool:
+    """用 fnmatch 语义匹配 `**` 风格 glob（`*` 跨目录）；`**/x` 同时匹配根级 x。"""
+    pat = pattern.replace("\\", "/")
+    candidates = [pat]
+    if pat.startswith("**/"):
+        candidates.append(pat[3:])
+    return any(fnmatch.fnmatchcase(rel, p) for p in candidates)
+
+
 def glob_hits(root: Path, pattern: str) -> list:
     """展开相对仓库根的 glob，过滤 IGNORED_DIRS，返回相对路径 posix 串列表（已排序）。"""
-    full = root / pattern
-    hits = []
-    for raw in globmod.glob(str(full), recursive=True):
-        f = Path(raw)
-        if not f.is_file():
-            continue
-        try:
-            rel = f.resolve().relative_to(root.resolve())
-        except ValueError:
-            continue
-        if any(part in IGNORED_DIRS for part in rel.parts):
-            continue
-        hits.append(rel.as_posix())
-    return sorted(hits)
+    return [rel for rel in _walk_files(root) if _match_glob(rel, pattern)]
+
+
+DEFAULT_ANCHOR_LIMIT = 20  # 每维度锚点文件上限（维度可用 anchorLimit 覆盖，0 = 不设上限）
+_ANCHOR_WARNED = set()
+_WALK_CACHE = {}  # codeRoot -> 文件相对路径列表（单次剪枝遍历，跨维度复用）
 
 
 def anchor_sources(code_root: Path, dim: dict) -> dict:
@@ -300,13 +323,37 @@ def anchor_sources(code_root: Path, dim: dict) -> dict:
     if anchors == ["@tree"]:
         return {"tree": "sha256:" + tree_anchor(code_root)}
     out = {}
-    count = 0
+    rels = []
+    seen = set()
     for pat in anchors:
         for rel in glob_hits(code_root, pat):
-            if count >= 20:
-                return out
-            out[rel] = "sha256:" + file_sha256(code_root / rel)
-            count += 1
+            if rel in seen:
+                continue
+            seen.add(rel)
+            rels.append(rel)
+    try:
+        limit = int(dim.get("anchorLimit", DEFAULT_ANCHOR_LIMIT))
+    except (TypeError, ValueError):
+        limit = DEFAULT_ANCHOR_LIMIT
+    if limit > 0 and len(rels) > limit:
+        total = len(rels)
+        step = total / limit
+        sampled = []
+        for i in range(limit):
+            idx = int(i * step)
+            if idx >= total:
+                idx = total - 1
+            if rels[idx] not in sampled:
+                sampled.append(rels[idx])
+        key = (dim.get("id"), dim.get("key"), total, limit)
+        if key not in _ANCHOR_WARNED:
+            _ANCHOR_WARNED.add(key)
+            print("! dim {} {}: 锚点命中 {} 个文件，超过上限 {}，已均匀抽样 {} 个；"
+                  "未抽到的文件不参与过期检测（可在 manifest 该维度设置 anchorLimit）".format(
+                      dim.get("id"), dim.get("title"), total, limit, len(sampled)))
+        rels = sampled
+    for rel in rels:
+        out[rel] = "sha256:" + file_sha256(code_root / rel)
     return out
 
 
@@ -587,17 +634,38 @@ def cmd_refresh(args) -> int:
             print("+ dim {} {}: 最新".format(dim["id"], dim["title"]))
 
     if args.mark_fresh:
+        only = (getattr(args, "only", None) or "").replace(",", " ").split()
+        target_ids = None
+        if only:
+            target_ids = set()
+            for dim in mf["dimensions"]:
+                if str(dim.get("id")) in only or dim.get("key") in only:
+                    target_ids.add(str(dim.get("id")))
+            if not target_ids:
+                print("! --only 未匹配任何维度: {}".format(" ".join(only)))
+                return 1
         mf.setdefault("_index", {})
         mf["_index"]["version"] = int(mf["_index"].get("version", 1)) + 1
         mf["_index"]["lastIncrementalRefresh"] = now_iso()
         save_manifest(root, mf)
+        sealed = []
         for dim in mf["dimensions"]:
+            if target_ids is not None and str(dim.get("id")) not in target_ids:
+                continue
             dim_path = dim_file_path(root, dim)
             if dim_path.exists():
                 write_anchors(dim_path, anchor_sources(code_root, dim))
+                sealed.append("{} {}".format(dim["id"], dim["key"]))
         gen = render_generated(mf, mf["dimensions"], mf["taskTypes"], root / "ai")
         rewrite_generated_section(root / "ai" / "AGENTS.md", gen)
-        print("\n✅ 锚点已封存，AGENTS.md 生成区已重写（版本 {}）".format(mf["_index"]["version"]))
+        n_tasks = write_tasks(root, quiet=True)
+        if n_tasks:
+            print("✅ 任务台账已同步（{} 个任务）".format(n_tasks))
+        if target_ids is None:
+            print("\n✅ 全部维度锚点已封存，AGENTS.md 生成区已重写（版本 {}）".format(mf["_index"]["version"]))
+        else:
+            print("\n✅ 已封存 {} 个维度（{}），其余维度保持旧锚点；AGENTS.md 生成区已重写（版本 {}）".format(
+                len(sealed), "、".join(sealed), mf["_index"]["version"]))
     elif stale:
         print("\n提示: 重分析过期维度后运行 `python sop.py refresh --mark-fresh` 封存")
     else:
@@ -678,9 +746,628 @@ def cmd_context_check(root: Path) -> int:
                 dim["id"], dim["title"], ", ".join(anchors)))
             ok = False
 
+    # 仓库入口文件（可选）：启用时做 lint 告警，不阻塞主校验
+    ecfg = entry_config(mf)
+    if ecfg:
+        epath = code_root / ecfg["file"]
+        if not epath.is_file():
+            print("! entry: 已配置但文件不存在 {}（运行 `python sop.py entry` 生成）".format(epath))
+        else:
+            etext = epath.read_text(encoding="utf-8")
+            egen = ENTRY_GEN_BEGIN + "\n" + render_entry_gen(mf) + "\n" + ENTRY_GEN_END
+            eissues = entry_lint(etext, ecfg)
+            ecur = extract_block(etext, ENTRY_GEN_BEGIN, ENTRY_GEN_END)
+            if not ecur:
+                eissues.append("缺少 ENTRY-GEN 标记（未由 `python sop.py entry` 维护）")
+            elif ecur.strip() != egen[len(ENTRY_GEN_BEGIN):-len(ENTRY_GEN_END)].strip():
+                eissues.append("生成区与 manifest 不同步（重跑 `python sop.py entry`）")
+            for it in eissues:
+                print("! entry {}: {}".format(ecfg["file"], it))
+
+    # 任务台账（可选）：存在 ai/*/plan.md 时做结构告警，不阻塞主校验
+    tasks = collect_tasks(root / "ai")
+    if tasks:
+        for lv, msg in tasks_lint(tasks):
+            print("{} tasks: {}".format("!" if lv == "err" else "~", msg))
+
     print("manifest: {} 维度 / {} 任务类型".format(len(ids), len(mf["taskTypes"])))
     print("✅ 上下文校验通过" if ok else "❌ 存在问题（见上）")
     return 0 if ok else 1
+
+
+# ---------------------------------------------------------------------------
+# 命令：entry（生成/校验仓库入口文件，通用无项目信息）
+# ---------------------------------------------------------------------------
+
+ENTRY_GEN_BEGIN = "<!-- ENTRY-GEN:BEGIN -->"
+ENTRY_GEN_END = "<!-- ENTRY-GEN:END -->"
+ENTRY_MANUAL_BEGIN = "<!-- ENTRY-MANUAL:BEGIN -->"
+ENTRY_MANUAL_END = "<!-- ENTRY-MANUAL:END -->"
+
+ENTRY_FORBIDDEN = [
+    (re.compile(r"(?i)(password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)"), "疑似凭据关键词"),
+    (re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]{16,}"), "疑似 token 串"),
+    (re.compile(r"BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY"), "私钥块"),
+    (re.compile(r"(?i)([A-Z]:\\Users\\|/Users/|/home/[a-z]+/)"), "绝对家目录路径（应改用相对路径或说明性文字）"),
+    (re.compile(r"(最近变更|状态补充|最新进展|本周|上周|昨天|今日更新)"), "时效性状态（应落 ai/status/ 归档，入口文件不记流水）"),
+]
+
+
+def entry_config(mf: dict) -> dict:
+    """读取 manifest 的可选 entry 配置；file 为空表示未启用。"""
+    cfg = mf.get("entry")
+    if not isinstance(cfg, dict):
+        return {}
+    if not str(cfg.get("file") or "").strip():
+        return {}
+    out = dict(cfg)
+    out["file"] = str(cfg["file"]).strip()
+    try:
+        out["maxLines"] = int(cfg.get("maxLines", 45))
+    except (TypeError, ValueError):
+        out["maxLines"] = 45
+    return out
+
+
+def render_entry_gen(mf: dict) -> str:
+    """生成区正文：纪律索引（来自各维度 entryHint）+ 任务→维度路由表 + 维护契约。"""
+    dims = mf.get("dimensions") or []
+    blocks = []
+    blocks.append("## 纪律索引（正文在各维度，本文件只做指向）")
+    blocks.append("")
+    hints = [(d, str(d.get("entryHint") or "").strip()) for d in dims]
+    hints = [(d, h) for d, h in hints if h]
+    if hints:
+        for d, h in hints:
+            blocks.append("- {}（→ 维度 {} {}）".format(h, d.get("id"), d.get("title")))
+    else:
+        blocks.append("- （尚未声明 entryHint：在 manifest 的维度条目上补 `entryHint`（一条 ≤1 行的纪律摘要），"
+                      "再运行 `python sop.py entry` 生成）")
+    blocks.append("")
+    blocks.append("## 按任务读维度")
+    blocks.append("")
+    blocks.append("| 任务类型 | 必读维度 | 可选维度 |")
+    blocks.append("|----------|----------|----------|")
+    for t in mf.get("taskTypes") or []:
+        must, opt = [], []
+        if t == "onboarding":
+            # onboarding 恒为全部维度（与 render_generated 用的 aggregate_task_map 语义一致）
+            must = ["{} {}".format(d.get("id"), d.get("key")) for d in dims]
+        else:
+            for d in dims:
+                tasks = d.get("tasks") or {}
+                m = tasks.get("must") or []
+                o = tasks.get("optional") or []
+                tag = "{} {}".format(d.get("id"), d.get("key"))
+                if t in m or "*" in m:
+                    must.append(tag)
+                elif t in o:
+                    opt.append(tag)
+        blocks.append("| {} | {} | {} |".format(t, "、".join(must) or "-", "、".join(opt) or "-"))
+    blocks.append("")
+    blocks.append("## 维护契约")
+    blocks.append("")
+    blocks.append("- 本生成区（`ENTRY-GEN` 标记之间）**禁止手改**：改 manifest 的 `entry` 或维度 `entryHint` 后，运行 `python sop.py entry` 重生成。")
+    blocks.append("- 维度正文变更后：`python sop.py check --context` → `python sop.py refresh --mark-fresh`。")
+    blocks.append("- 手写区（`ENTRY-MANUAL` 标记之间）归项目：放架构概览、易踩空点、上游资产边界等只能人判断的内容。")
+    blocks.append("- **本文件不做第二事实源**：任何规则/环境事实/凭据都应写在维度体系（`ai/context/`）里，入口只保留指向。")
+    return "\n".join(blocks)
+
+
+def entry_lint(text: str, cfg: dict) -> list:
+    """入口文件 lint：行数、权威声明、凭据、时效性状态、超长行。返回问题列表。"""
+    issues = []
+    lines = text.splitlines()
+    if len(lines) > cfg["maxLines"]:
+        issues.append("行数 {} 超过上限 {}（入口文件应做薄，细则放维度）".format(len(lines), cfg["maxLines"]))
+    if "ai/context" not in text:
+        issues.append("缺少「权威在 ai/context 维度体系」声明")
+    for rx, why in ENTRY_FORBIDDEN:
+        m = rx.search(text)
+        if m:
+            issues.append("{}：{}".format(why, m.group(0)[:40]))
+    for i, ln in enumerate(lines, 1):
+        if len(ln) > 400:
+            issues.append("第 {} 行超长（{} 字符），疑似把维度正文抄进入口".format(i, len(ln)))
+    return issues
+
+
+def extract_block(text: str, begin: str, end: str) -> str:
+    i = text.find(begin)
+    j = text.find(end)
+    if i < 0 or j < 0 or j <= i:
+        return ""
+    return text[i + len(begin):j]
+
+
+def cmd_entry(args) -> int:
+    root = Path(args.root).resolve()
+    mf = load_manifest(root)
+    if mf is None:
+        print("! ai/{} 缺失，请先运行 `python sop.py init`".format(MANIFEST_NAME))
+        return 1
+    cfg = entry_config(mf)
+    if not cfg:
+        print("! manifest 未启用 entry（可选配置：\"entry\": {\"file\": \"AGENTS.md\", \"maxLines\": 45, \"title\": \"…\"}）")
+        print("  启用后本命令会在 codeRoot 下生成/刷新入口文件生成区，并可用 --check 校验。")
+        return 0
+    code_root = Path(mf.get("codeRoot", root))
+    out_path = Path(args.out).resolve() if getattr(args, "out", None) else (code_root / cfg["file"])
+    # 落点告知（不做分配器，只防「默认落仓根」这种静默选择）：
+    # 落点应由人决定（仓根 / 与 ai 同级 / 项目更合适处），结论记进 plan.md 的 assumptions。
+    try:
+        inside_code = out_path.resolve().is_relative_to(Path(code_root).resolve())
+    except (OSError, ValueError):
+        inside_code = True
+    if inside_code:
+        note = "仓库内（codeRoot）"
+        if Path(root).resolve() != Path(code_root).resolve():
+            note += "；ai/ 在仓库外 → 入口指向的 ai/context 对 clone 者不可见，确认过落点再继续"
+    else:
+        note = "仓库外，与 ai/ 同级或自定义位置"
+    print("entry 落点: {} — {}".format(out_path, note))
+    gen = ENTRY_GEN_BEGIN + "\n" + render_entry_gen(mf) + "\n" + ENTRY_GEN_END
+    manual_placeholder = (ENTRY_MANUAL_BEGIN + "\n"
+                          + "<!-- 手写区：架构概览 / 易踩空点 / 上游资产边界。工具不覆盖，也不校验。 -->\n"
+                          + ENTRY_MANUAL_END)
+
+    if getattr(args, "check", False):
+        if not out_path.is_file():
+            print("! 入口文件不存在: {}".format(out_path))
+            return 1
+        text = out_path.read_text(encoding="utf-8")
+        issues = entry_lint(text, cfg)
+        current_gen = extract_block(text, ENTRY_GEN_BEGIN, ENTRY_GEN_END)
+        if not current_gen:
+            issues.append("缺少 ENTRY-GEN 标记（未由 `sop.py entry` 生成）")
+        elif current_gen.strip() != gen[len(ENTRY_GEN_BEGIN):-len(ENTRY_GEN_END)].strip():
+            issues.append("生成区与 manifest 不同步（重跑 `python sop.py entry`）")
+        print("entry: {}（上限 {} 行）".format(out_path, cfg["maxLines"]))
+        if issues:
+            for it in issues:
+                print("! {}".format(it))
+            print("❌ 入口文件校验存在问题（{} 项）".format(len(issues)))
+            return 1
+        print("✅ 入口文件校验通过")
+        return 0
+
+    if out_path.is_file() and not getattr(args, "force", False):
+        text = out_path.read_text(encoding="utf-8")
+        if ENTRY_GEN_BEGIN in text and ENTRY_GEN_END in text:
+            i = text.find(ENTRY_GEN_BEGIN)
+            j = text.find(ENTRY_GEN_END) + len(ENTRY_GEN_END)
+            new_text = text[:i] + gen + text[j:]
+        else:
+            print("! 已存在入口文件但缺少 ENTRY-GEN 标记，未改动内容。")
+            print("  两种做法：① 手工插入 `{}` 与 `{}` 两行后重跑；② 确认可覆盖时加 --force。".format(
+                ENTRY_GEN_BEGIN, ENTRY_GEN_END))
+            return 1
+    else:
+        title = str(cfg.get("title") or "").strip() or "仓库入口（AGENTS.md）"
+        head = [
+            "# " + title,
+            "",
+            "> 本文件是**入口**，不是规则库：只做「纪律指向 + 按任务读维度 + 维护契约」。",
+            "> 权威永远在 `ai/context/` 维度体系（{} 个维度），本文件不复述其正文。".format(len(mf.get("dimensions") or [])),
+            "",
+        ]
+        new_text = "\n".join(head) + gen + "\n\n" + manual_placeholder + "\n"
+    if not out_path.parent.is_dir():
+        print("! 目标目录不存在: {}".format(out_path.parent))
+        return 1
+    out_path.write_text(new_text, encoding="utf-8", newline="\n")
+    issues = entry_lint(new_text, cfg)
+    print("✅ 入口文件已写入: {}".format(out_path))
+    for it in issues:
+        print("! {}".format(it))
+    print("提示：手写区内的人工判断内容（架构概览/易踩空点/上游资产边界）不会被重生成覆盖。")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# 命令：tasks（任务台账：从各任务 plan.md 聚合完成状态与相互关联）
+# ---------------------------------------------------------------------------
+
+TASKS_FILE = "TASKS.md"
+TASK_SKIP_DIRS = {"context", "templates", "status", "archive"}
+TASK_STATUS_ALIASES = {
+    "pending": "pending", "todo": "pending", "planned": "pending", "new": "pending",
+    "doing": "doing", "in-progress": "doing", "in_progress": "doing", "inprogress": "doing",
+    "wip": "doing", "active": "doing", "open": "doing",
+    "blocked": "blocked", "stuck": "blocked",
+    "done": "done", "complete": "done", "completed": "done", "finished": "done", "closed": "done",
+    "dropped": "dropped", "canceled": "dropped", "cancelled": "dropped", "abandoned": "dropped",
+}
+TASK_STATUS_ORDER = ["doing", "blocked", "pending", "done", "dropped"]
+PLAN_LEDGER_FIELDS = {
+    "task.id", "task.title", "task.type", "mode", "status", "parent",
+    "depends", "relates", "supersedes", "updated",
+}
+TASK_FIELD_RX = re.compile(r"^\|\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\|\s*(.*?)\s*\|\s*$")
+
+
+def parse_plan_fields(plan: Path) -> dict:
+    """读取 plan.md 顶部字段表（`| key | value |`）；只认台账相关字段，避免误读正文表格。"""
+    fields = {}
+    try:
+        lines = plan.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return fields
+    for line in lines:
+        m = TASK_FIELD_RX.match(line)
+        if not m:
+            continue
+        key, value = m.group(1), m.group(2).strip()
+        if key in PLAN_LEDGER_FIELDS and key not in fields:
+            fields[key] = value
+    return fields
+
+
+def parse_refs(value: str) -> list:
+    """把 `[a, b]` / `a、b` / `a b` 解析为 id 列表；空值与占位符返回 []。"""
+    v = (value or "").strip()
+    if not v or v.strip("[]") == "" or v in ("-", "—", "无", "None", "null"):
+        return []
+    v = v.strip("[]")
+    out = []
+    for part in re.split(r"[,，、;；\s]+", v):
+        p = part.strip().strip("`'\"")
+        if p and p not in ("-", "—", "无"):
+            out.append(p)
+    return out
+
+
+def normalize_status(raw: str) -> tuple:
+    """返回 (规范化状态, 原始值是否合法)。空值按 pending 处理。"""
+    v = (raw or "").strip().strip("`'\"")
+    if not v:
+        return "pending", True
+    key = v.lower().replace(" ", "-")
+    if key in TASK_STATUS_ALIASES:
+        return TASK_STATUS_ALIASES[key], True
+    return v, False
+
+
+def collect_tasks(ai_dir: Path) -> list:
+    """扫描 ai/<task>/plan.md，抽出台账字段（不含正文）。"""
+    tasks = []
+    if not ai_dir.is_dir():
+        return tasks
+    for plan in sorted(ai_dir.glob("*/plan.md")):
+        d = plan.parent
+        if d.name.startswith(".") or d.name in TASK_SKIP_DIRS:
+            continue
+        f = parse_plan_fields(plan)
+        status, status_ok = normalize_status(f.get("status", ""))
+        parent = (f.get("parent") or "").strip().strip("`")
+        if parent in ("-", "—", "无", "None", "null"):
+            parent = ""
+        tasks.append({
+            "id": (f.get("task.id") or d.name).strip().strip("`"),
+            "dir": d.name,
+            "title": (f.get("task.title") or "").strip(),
+            "type": (f.get("task.type") or "").strip(),
+            "mode": (f.get("mode") or "").strip(),
+            "status": status,
+            "statusRaw": (f.get("status") or "").strip(),
+            "statusOk": status_ok,
+            "parent": parent,
+            "depends": parse_refs(f.get("depends", "")),
+            "relates": parse_refs(f.get("relates", "")),
+            "supersedes": parse_refs(f.get("supersedes", "")),
+            "updated": (f.get("updated") or "").strip(),
+        })
+    return tasks
+
+
+def tasks_lint(tasks: list) -> list:
+    """结构校验：状态枚举 / id 唯一 / 引用存在 / 自引用 / depends 成环 / done 前置未完成。"""
+    issues = []
+    ids = {}
+    for t in tasks:
+        if not t["statusOk"]:
+            issues.append(("err", "任务 {} 的 status 非法：`{}`（可用 doing/pending/blocked/done/dropped）".format(
+                t["id"], t["statusRaw"])))
+        if not t["statusRaw"]:
+            issues.append(("warn", "任务 {} 缺 status 字段（按 pending 处理）".format(t["id"])))
+        if not t["title"]:
+            issues.append(("warn", "任务 {} 缺 task.title（台账「目标」列为空）".format(t["id"])))
+        if t["id"] in ids:
+            issues.append(("err", "任务 id 重复：{}（{} 与 {}）".format(
+                t["id"], ids[t["id"]]["dir"], t["dir"])))
+        ids[t["id"]] = t
+    for t in tasks:
+        if t["parent"] and t["parent"] not in ids:
+            issues.append(("err", "任务 {} 的 parent 指向未知任务：{}".format(t["id"], t["parent"])))
+        if t["parent"] == t["id"]:
+            issues.append(("err", "任务 {} 的 parent 指向自己".format(t["id"])))
+        for field, refs in (("depends", t["depends"]), ("relates", t["relates"]),
+                            ("supersedes", t["supersedes"])):
+            for ref in refs:
+                if ref == t["id"]:
+                    issues.append(("err", "任务 {} 的 {} 指向自己".format(t["id"], field)))
+                elif ref not in ids:
+                    issues.append(("err", "任务 {} 的 {} 指向未知任务：{}".format(t["id"], field, ref)))
+
+    graph = {t["id"]: [r for r in t["depends"] if r in ids] for t in tasks}
+    color = {}
+
+    def _visit(node: str, stack: list) -> None:
+        color[node] = 1
+        for nxt in graph.get(node, []):
+            if color.get(nxt) == 1:
+                issues.append(("err", "depends 成环：{} → {}（路径 {}）".format(
+                    node, nxt, " → ".join(stack + [node, nxt]))))
+            elif color.get(nxt) is None:
+                _visit(nxt, stack + [node])
+        color[node] = 2
+
+    for node in graph:
+        if color.get(node) is None:
+            _visit(node, [])
+
+    for t in tasks:
+        if t["status"] != "done":
+            continue
+        for ref in t["depends"]:
+            dep = ids.get(ref)
+            if dep and dep["status"] != "done":
+                issues.append(("warn", "任务 {} 标 done，但 depends 的 {} 仍是 {}".format(
+                    t["id"], ref, dep["status"])))
+    return issues
+
+
+def task_edges(tasks: list) -> tuple:
+    """返回 (关联边列表, 被依赖映射)。relates 视为无向，双向声明只保留一条。"""
+    edges = []
+    blocked_by = {}
+    seen_undirected = set()
+    for t in tasks:
+        if t["parent"]:
+            edges.append(("parent", t["id"], t["parent"]))
+        for ref in t["depends"]:
+            edges.append(("depends", t["id"], ref))
+            blocked_by.setdefault(ref, []).append(t["id"])
+        for ref in t["relates"]:
+            pair = tuple(sorted((t["id"], ref)))
+            if pair in seen_undirected:
+                continue
+            seen_undirected.add(pair)
+            edges.append(("relates", t["id"], ref))
+        for ref in t["supersedes"]:
+            edges.append(("supersedes", t["id"], ref))
+    return edges, blocked_by
+
+
+def render_tasks(tasks: list, issues: list) -> str:
+    """渲染台账正文（确定性输出：同输入同文本，便于 tasks --check 判断是否同步）。"""
+    edges, blocked_by = task_edges(tasks)
+
+    counts = {}
+    for t in tasks:
+        counts[t["status"]] = counts.get(t["status"], 0) + 1
+    dist = " / ".join("{} {}".format(s, counts[s]) for s in TASK_STATUS_ORDER if counts.get(s))
+
+    lines = [
+        "<!-- 本文件由 `python sop.py tasks` 生成，禁止手改：事实源是各任务 ai/<task>/plan.md 的字段表 -->",
+        "",
+        "# 任务台账",
+        "",
+        "| 统计 | 值 |",
+        "|------|-----|",
+        "| 任务数 | {} |".format(len(tasks)),
+        "| 状态分布 | {} |".format(dist or "-"),
+        "| 关联边 | {} |".format(len(edges)),
+        "",
+        "## 任务清单",
+        "",
+        "| 任务 | 状态 | 类型 | 目标 | 依赖 | 被依赖 | 更新 |",
+        "|------|------|------|------|------|--------|------|",
+    ]
+    order = {s: i for i, s in enumerate(TASK_STATUS_ORDER)}
+    for t in sorted(tasks, key=lambda x: (order.get(x["status"], 99), x["id"])):
+        lines.append("| `{}` | {} | {} | {} | {} | {} | {} |".format(
+            t["id"], t["status"], t["type"] or "-", t["title"] or "-",
+            "、".join(t["depends"]) or "-",
+            "、".join(blocked_by.get(t["id"], [])) or "-",
+            t["updated"] or "-"))
+    lines += ["", "## 关联关系", ""]
+    if edges:
+        lines += ["| 关系 | 从 | 到 |", "|------|----|----|"]
+        for kind, src, dst in edges:
+            lines.append("| {} | `{}` | `{}` |".format(kind, src, dst))
+    else:
+        lines.append("（暂无跨任务关联：在 plan.md 字段表写 `depends` / `relates` / `parent`）")
+    lines += ["", "## 校验", ""]
+    errs = [m for lv, m in issues if lv == "err"]
+    warns = [m for lv, m in issues if lv == "warn"]
+    if not errs and not warns:
+        lines.append("✅ 结构完整：状态合法、id 唯一、引用存在、depends 无环。")
+    else:
+        for m in errs:
+            lines.append("- ❌ {}".format(m))
+        for m in warns:
+            lines.append("- ⚠️ {}".format(m))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_tasks(root: Path, out: Path = None, quiet: bool = False) -> int:
+    """渲染并写盘 ai/TASKS.md；返回任务数（0 = 无任务，未写）。"""
+    ai_dir = root / "ai"
+    tasks = collect_tasks(ai_dir)
+    if not tasks:
+        return 0
+    text = render_tasks(tasks, tasks_lint(tasks))
+    target = out or (ai_dir / TASKS_FILE)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8", newline="\n")
+    if not quiet:
+        print("✅ 任务台账已写入: {}（{} 个任务）".format(target, len(tasks)))
+    return len(tasks)
+
+
+def infer_status(task_dir: Path) -> tuple:
+    """从 NOTES.md 找「已收工」的客观证据；找不到返回 (None, "")，交给人工确认。"""
+    notes = task_dir / "NOTES.md"
+    if not notes.is_file():
+        return None, ""
+    try:
+        text = notes.read_text(encoding="utf-8")
+    except OSError:
+        return None, ""
+    if re.search(r"(验收通过|收工|\[x\]\s*验收|状态[:：]\s*(done|完成))", text):
+        return "done", "NOTES 有验收/收工记录"
+    return None, ""
+
+
+def backfill_plan(plan: Path, status_default: str, dry_run: bool) -> dict:
+    """给缺台账字段的 plan.md 顶部字段表补行（幂等）；返回补录报告。"""
+    try:
+        lines = plan.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return {"ok": False, "reason": "读取失败：{}".format(exc), "added": []}
+    existing = set()
+    last_row = -1
+    for i, ln in enumerate(lines):
+        m = TASK_FIELD_RX.match(ln)
+        if not m:
+            continue
+        if m.group(1) in PLAN_LEDGER_FIELDS:
+            existing.add(m.group(1))
+            last_row = i
+    if last_row < 0:
+        return {"ok": False, "reason": "未找到字段表（| key | value |）", "added": []}
+
+    inferred, basis = infer_status(plan.parent)
+    values = {
+        "status": inferred or status_default,
+        "parent": "-",
+        "depends": "-",
+        "relates": "-",
+        "updated": datetime.fromtimestamp(plan.stat().st_mtime).strftime("%Y-%m-%d"),
+    }
+    need = [k for k in ("status", "parent", "depends", "relates", "updated") if k not in existing]
+    if not need:
+        return {"ok": True, "reason": "已齐全", "added": [], "needs_confirm": False}
+    new_rows = ["| {} | {} |".format(k, values[k]) for k in need]
+    lines[last_row + 1:last_row + 1] = new_rows
+    if not dry_run:
+        plan.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    return {
+        "ok": True,
+        "added": need,
+        "values": values,
+        "needs_confirm": ("status" in need) and not inferred,
+        "basis": basis or "缺省（需人工确认）",
+    }
+
+
+def suggest_relations(ai_dir: Path, tasks: list) -> list:
+    """关系建议：若某任务的 plan/NOTES 里出现另一个任务的 id 或目录名，提示 relates 候选（不写盘）。"""
+    out, seen = [], set()
+    for t in tasks:
+        for fname in ("plan.md", "NOTES.md"):
+            p = ai_dir / t["dir"] / fname
+            if not p.is_file():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for other in tasks:
+                if other["dir"] == t["dir"]:
+                    continue
+                if other["id"] not in text and other["dir"] not in text:
+                    continue
+                pair = tuple(sorted((t["id"], other["id"])))
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                out.append((t["dir"], t["id"], other["id"], fname))
+    return out
+
+
+def cmd_tasks_backfill(ai_dir: Path, args) -> int:
+    tasks = collect_tasks(ai_dir)
+    if not tasks:
+        print("（ai/ 下暂无任务 plan.md，无需补录）")
+        return 0
+    status_default, _ = normalize_status(getattr(args, "status", "pending") or "pending")
+    dry = bool(getattr(args, "dry_run", False))
+    print("tasks 补录：{} 个任务{}".format(len(tasks), "（dry-run，不落盘）" if dry else ""))
+    changed, confirm, skipped = 0, [], 0
+    for t in tasks:
+        rep = backfill_plan(ai_dir / t["dir"] / "plan.md", status_default, dry)
+        if not rep["ok"]:
+            print("- `{}`：跳过（{}）".format(t["id"], rep["reason"]))
+            skipped += 1
+            continue
+        if not rep["added"]:
+            print("- `{}`：已齐全".format(t["id"]))
+            continue
+        changed += 1
+        vals = rep["values"]
+        print("- `{}`：补 {}（status={} ← {}）".format(
+            t["id"], "、".join(rep["added"]), vals["status"], rep["basis"]))
+        if rep["needs_confirm"]:
+            confirm.append(t["id"])
+    if confirm:
+        print("\n需人工确认状态：{}（补录用了缺省 {}，请按实际改成 doing/done/blocked/dropped 后重跑 `python sop.py tasks`）".format(
+            "、".join(confirm), status_default))
+    if not getattr(args, "no_suggest", False):
+        sug = suggest_relations(ai_dir, tasks)
+        if sug:
+            print("\n建议关系（未写入；确认后填进 plan.md 的 relates）：")
+            for src_dir, src_id, dst_id, fname in sug:
+                print("  {} → {}（出现在 {}/{}）".format(src_id, dst_id, src_dir, fname))
+    print("\n补录 {} 个{}；下一步：`python sop.py tasks` 生成台账 → `python sop.py tasks --check` 校验".format(
+        changed, "（dry-run 未落盘）" if dry else ""))
+    return 0
+
+
+def cmd_tasks(args) -> int:
+    root = Path(args.root).resolve()
+    ai_dir = root / "ai"
+    if not ai_dir.is_dir():
+        print("! ai/ 不存在，请先运行 `python sop.py init`")
+        return 1
+    if getattr(args, "backfill", False):
+        return cmd_tasks_backfill(ai_dir, args)
+    tasks = collect_tasks(ai_dir)
+    if not tasks:
+        print("（ai/ 下暂无任务 plan.md）")
+        return 0
+    issues = tasks_lint(tasks)
+    text = render_tasks(tasks, issues)
+    target = Path(args.out).resolve() if getattr(args, "out", None) else ai_dir / TASKS_FILE
+    edges = len(task_edges(tasks)[0])
+
+    if getattr(args, "check", False):
+        print("tasks: {} 个任务 / {} 条关联（{}）".format(len(tasks), edges, target))
+        for lv, m in issues:
+            print("{} {}".format("!" if lv == "err" else "~", m))
+        bad = [m for lv, m in issues if lv == "err"]
+        if not target.is_file():
+            print("! 台账不存在: {}（运行 `python sop.py tasks`）".format(target))
+            print("❌ 任务台账校验存在问题")
+            return 1
+        if target.read_text(encoding="utf-8").strip() != text.strip():
+            print("! 台账与 plan.md 不同步（运行 `python sop.py tasks` 重生成）")
+            print("❌ 任务台账校验存在问题")
+            return 1
+        if bad:
+            print("❌ 任务台账校验存在问题")
+            return 1
+        print("✅ 任务台账校验通过")
+        return 0
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8", newline="\n")
+    print("✅ 任务台账已写入: {}（{} 个任务 / {} 条关联）".format(target, len(tasks), edges))
+    for lv, m in issues:
+        print("{} {}".format("!" if lv == "err" else "~", m))
+    return 0
 
 
 def cmd_check(args) -> int:
@@ -1316,6 +2003,26 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--root", default=".")
     pr.add_argument("--mark-fresh", action="store_true",
                     help="封存锚点 + 递增版本 + 重写 AGENTS.md 生成区")
+    pr.add_argument("--only", default="",
+                    help="仅封存指定维度（id 或 key，逗号/空格分隔，如 --only 12,13）；缺省封存全部")
+
+    pe = sub.add_parser("entry", help="生成/校验仓库入口文件（入口 + 纪律指向 + 任务路由，不复制维度正文）")
+    pe.add_argument("--root", default=".")
+    pe.add_argument("--check", action="store_true", help="只校验：行数上限 / 权威声明 / 凭据 / 时效状态 / 生成区是否与 manifest 同步")
+    pe.add_argument("--force", action="store_true", help="目标已存在且无 ENTRY-GEN 标记时，允许整体覆盖")
+    pe.add_argument("--out", default=None, help="自定义输出路径（默认 codeRoot/<entry.file>）")
+
+    ptask = sub.add_parser("tasks", help="任务台账：从各任务 plan.md 聚合完成状态与相互关联，渲染 ai/TASKS.md")
+    ptask.add_argument("--root", default=".")
+    ptask.add_argument("--check", action="store_true",
+                       help="只校验：status 枚举 / id 唯一 / 引用存在 / depends 成环 / 台账是否与 plan.md 同步")
+    ptask.add_argument("--out", default=None, help="自定义台账路径（默认 ai/TASKS.md）")
+    ptask.add_argument("--backfill", action="store_true",
+                       help="存量接入：给缺台账字段的 plan.md 补 status/parent/depends/relates/updated（建议先 --dry-run）")
+    ptask.add_argument("--status", default="pending",
+                       help="补录时的缺省 status（默认 pending；NOTES 有验收记录时优先推断 done）")
+    ptask.add_argument("--dry-run", action="store_true", help="只打印将补的字段，不写盘")
+    ptask.add_argument("--no-suggest", action="store_true", help="不打印跨任务关系建议")
 
     pd = sub.add_parser("dedup", help="实验查重（精确哈希）")
     pd.add_argument("task")
@@ -1393,7 +2100,8 @@ def main(argv=None) -> int:
         "init": cmd_init, "refresh": cmd_refresh, "dedup": cmd_dedup,
         "record": cmd_record, "render": cmd_render, "check": cmd_check,
         "lessons": cmd_lessons, "tokens": cmd_tokens, "dims": cmd_dims,
-        "audit": cmd_audit, "migrate": cmd_migrate,
+        "audit": cmd_audit, "migrate": cmd_migrate, "entry": cmd_entry,
+        "tasks": cmd_tasks,
     }
     return handlers[args.cmd](args)
 
