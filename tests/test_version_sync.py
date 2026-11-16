@@ -103,6 +103,16 @@ class TestVersionSync(unittest.TestCase):
         self.assertEqual(keys, sorted(keys), "版本历史表必须按版本号升序排列，实际：{}".format(rows))
         self.assertEqual(len(set(rows)), len(rows), "版本历史表存在重复版本行：{}".format(rows))
 
+    def test_no_py310_only_pathlib_write_kwargs(self):
+        """`Path.write_text` 的 newline 关键字是 Python 3.10+ 签名，3.9 上直接 TypeError。
+
+        CI 的 windows-3.9 job 抓到过：台账/计划文件全部没写出来，`tasks` 直接崩。
+        vermin 这类静态检查查不出关键字参数，只能用文本守卫兜住。
+        """
+        lines = SOP.read_text(encoding="utf-8").splitlines()
+        hits = [i + 1 for i, ln in enumerate(lines) if "write_text(" in ln and "newline=" in ln]
+        self.assertEqual(hits, [], "sop.py 第 {} 行用了 3.10+ 的 write_text(newline=)，改用 write_text_lf()".format(hits))
+
     def test_frontmatter_lists_all_subcommands(self):
         help_out = help_text()
         m = re.search(r"\{([a-z][a-z0-9,\-_]*)\}", help_out)

@@ -25,8 +25,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ["3.9", "3.13"]
+        # 3.9 是兼容下限（sop.py 用到 Path.is_relative_to）。ubuntu-latest 已是 26.04，
+        # 官方没有为它构建 3.9，所以这一格钉在 ubuntu-22.04；3.13 才跑 latest。
+        include:
+          - os: ubuntu-22.04
+            python: "3.9"
+          - os: windows-latest
+            python: "3.9"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.13"
     steps:
       - uses: actions/checkout@v4
 

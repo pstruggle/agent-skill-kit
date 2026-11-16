@@ -13,7 +13,7 @@ agent-skill-kit/
 ├─ install.ps1           # Windows / PowerShell 安装器
 ├─ install.sh            # macOS / Linux 安装器
 ├─ tests/
-│  └─ test_sop.py        # sop.py 命令行回归测试（45 用例，标准库 unittest，无第三方依赖）
+│  └─ test_sop.py        # sop.py 命令行回归测试（46 用例，标准库 unittest，无第三方依赖）
 ├─ skills/               # 唯一事实源：每个技能一个目录
 │  └─ project-task-sop/
 │     ├─ SKILL.md
@@ -32,12 +32,12 @@ agent-skill-kit/
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记 | 4.7.4 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记 | 4.7.5 |
 
 ## 回归测试
 
 ```sh
-python -m unittest discover -s tests -v      # 45 用例，约 28 s，全部在临时目录里跑
+python -m unittest discover -s tests -v      # 46 用例，约 24 s，全部在临时目录里跑
 ```
 
 `sop.py` 是纯标准库实现的单文件 CLI，改完至少跑一遍：
@@ -57,7 +57,7 @@ python skills/project-task-sop/sop.py tasks --backfill --dry-run --root <项目�
 
 ### CI 检查什么（`.github/workflows/test.yml`）
 
-推送 `main` 与 PR 时，在 ubuntu / windows × Python 3.9 / 3.13 上跑：
+推送 `main` 与 PR 时，在 **Ubuntu 22.04 / Windows** × **Python 3.9 / 3.13** 上跑（3.9 钉在 `ubuntu-22.04`：`ubuntu-latest` 已是 26.04，官方不再为它构建 3.9）：
 
 - `python -m unittest discover -s tests -v` —— 全部回归用例（含 `test_version_sync.py`）；
 - `python skills/project-task-sop/sop.py --help` —— CLI 能起、子命令齐全；
@@ -175,7 +175,7 @@ cd agent-skill-kit
 
 Run `--list` to see the skills and destinations, `--mode link` to symlink instead of copy, `--uninstall` to remove, `--help` for the full flag list.
 
-Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/test_sop.py` (stdlib `unittest`, 45 cases).
+Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/test_sop.py` (stdlib `unittest`, 46 cases).
 
 ## 许可证
 

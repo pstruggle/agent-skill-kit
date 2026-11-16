@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.7.4 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.7.5 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -134,6 +134,18 @@ DEFAULT_MANIFEST = {
 # ---------------------------------------------------------------------------
 
 
+def write_text_lf(path: Path, text: str) -> None:
+    """按 UTF-8 + LF 落盘（父目录不存在则创建）。
+
+    不用 `Path.write_text` 的 newline 关键字：那是 Python 3.10+ 才有的签名，
+    3.9 上会直接抛 TypeError（CI 的 windows-3.9 job 抓到过，台账/计划文件全部没写出来）。
+    显式 open 才能跨版本一致，也保证跨平台落盘只有 LF。
+    """
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -264,8 +276,7 @@ def load_manifest(root: Path) -> dict:
 
 
 def save_manifest(root: Path, manifest: dict) -> None:
-    manifest_path(root).write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_text_lf(manifest_path(root), json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
 
 
 def dim_file_name(dim: dict) -> str:
@@ -385,7 +396,7 @@ def write_anchors(dim_file: Path, anchors: dict) -> None:
         text = ANCHOR_LINE_RE.sub(lambda _m: line, text, count=1)
     else:
         text = text.rstrip() + "\n\n" + line + "\n"
-    dim_file.write_text(text, encoding="utf-8")
+    write_text_lf(dim_file, text)
 
 
 def diff_anchors(stored: dict, current: dict) -> list:
@@ -498,8 +509,7 @@ def rewrite_generated_section(idx_path: Path, new_section: str) -> None:
             GEN_BEGIN, GEN_END))
     head, rest = text.split(GEN_BEGIN, 1)
     _, tail = rest.split(GEN_END, 1)
-    idx_path.write_text(head + GEN_BEGIN + "\n" + new_section + "\n" + GEN_END + tail,
-                        encoding="utf-8")
+    write_text_lf(idx_path, head + GEN_BEGIN + "\n" + new_section + "\n" + GEN_END + tail)
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +594,7 @@ def cmd_init(args) -> int:
             "anchorsJson": json.dumps(anchors, sort_keys=True, ensure_ascii=False),
             "dimensionContent": "", "relatedRows": related_rows,
         }
-        dim_path.write_text(render_template(tmpl, values), encoding="utf-8")
+        write_text_lf(dim_path, render_template(tmpl, values))
         print("  + {}".format(dim_path.name))
 
     idx_path = root / "ai" / "AGENTS.md"
@@ -599,7 +609,7 @@ def cmd_init(args) -> int:
             "projectName": project_name, "timestamp": now, "manifestName": MANIFEST_NAME,
             "genSection": GEN_BEGIN + "\n" + gen + "\n" + GEN_END,
         }
-        idx_path.write_text(render_template(tmpl, values), encoding="utf-8")
+        write_text_lf(idx_path, render_template(tmpl, values))
         print("  + ai/AGENTS.md")
     return 0
 
@@ -957,7 +967,7 @@ def cmd_entry(args) -> int:
     if not out_path.parent.is_dir():
         print("! 目标目录不存在: {}".format(out_path.parent))
         return 1
-    out_path.write_text(new_text, encoding="utf-8", newline="\n")
+    write_text_lf(out_path, new_text)
     issues = entry_lint(new_text, cfg)
     print("✅ 入口文件已写入: {}".format(out_path))
     for it in issues:
@@ -1203,7 +1213,7 @@ def write_tasks(root: Path, out: Path = None, quiet: bool = False) -> int:
     text = render_tasks(tasks, tasks_lint(tasks))
     target = out or (ai_dir / TASKS_FILE)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text, encoding="utf-8", newline="\n")
+    write_text_lf(target, text)
     if not quiet:
         print("✅ 任务台账已写入: {}（{} 个任务）".format(target, len(tasks)))
     return len(tasks)
@@ -1255,7 +1265,7 @@ def backfill_plan(plan: Path, status_default: str, dry_run: bool) -> dict:
     new_rows = ["| {} | {} |".format(k, values[k]) for k in need]
     lines[last_row + 1:last_row + 1] = new_rows
     if not dry_run:
-        plan.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        write_text_lf(plan, "\n".join(lines) + "\n")
     return {
         "ok": True,
         "added": need,
@@ -1365,7 +1375,7 @@ def cmd_tasks(args) -> int:
         return 0
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text, encoding="utf-8", newline="\n")
+    write_text_lf(target, text)
     print("✅ 任务台账已写入: {}（{} 个任务 / {} 条关联）".format(target, len(tasks), edges))
     for lv, m in issues:
         print("{} {}".format("!" if lv == "err" else "~", m))
@@ -1678,7 +1688,7 @@ def inject_summary(dim_file: Path, summary: str) -> bool:
                         break
                 break
     new_text = text[:inject_at] + "> **摘要**: {}\n".format(summary) + text[inject_at:]
-    dim_file.write_text(new_text, encoding="utf-8")
+    write_text_lf(dim_file, new_text)
     return True
 
 
@@ -1804,7 +1814,7 @@ def cmd_migrate(args) -> int:
         if m:
             project_name = m.group(1).strip()
         manual_text = extract_manual_from_v3_index(old_text)
-    idx_path.write_text(rebuild_agents_index(root, project_name, manual_text), encoding="utf-8")
+    write_text_lf(idx_path, rebuild_agents_index(root, project_name, manual_text))
     print("+ ai/AGENTS.md（分区改造：生成区占位 + 手工区保留 {} 个段）".format(
         manual_text.count("## ") if manual_text else 0))
 
@@ -1927,7 +1937,7 @@ def cmd_render(args) -> int:
                   "- **哈希**: `{}`".format(r.get("hash", "")), ""]
     report = "\n".join(lines)
     if args.out:
-        Path(args.out).write_text(report, encoding="utf-8")
+        write_text_lf(Path(args.out), report)
         print("+ 已写入 {}".format(args.out))
     else:
         print(report)
@@ -1993,7 +2003,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.7.4（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.7.5（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")
