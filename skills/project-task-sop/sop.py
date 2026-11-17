@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.12.0 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.12.1 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -2719,13 +2719,21 @@ def build_manifest_from_v3(v3: dict, code_root: str, ai_dir: Path) -> dict:
         })
 
     meta, _ = read_v3_index(ai_dir)
+    # 默认归属表引用 9 个维度 key；迁移来的项目可能只有其中几个，
+    # 原样写入会让 check --context 直接判「引用未知维度 key」。
+    dim_keys = {d["key"] for d in dimensions}
+    attribution = {}
+    for info_type, keys in DEFAULT_MANIFEST["attribution"].items():
+        kept = [k for k in keys if k in dim_keys]
+        if kept or not keys:
+            attribution[info_type] = kept
     return {
         "_comment": MIGRATE_COMMENT,
         "version": 2,
         "codeRoot": code_root,
         "taskTypes": task_types,
-        # 默认归属表（v4.4+）：audit 依赖；项目增删维度后按需调整
-        "attribution": json.loads(json.dumps(DEFAULT_MANIFEST["attribution"])),
+        # 默认归属表（v4.4+），已裁剪为项目实际声明的维度；audit 依赖
+        "attribution": attribution,
         "dimensions": dimensions,
         "_index": {
             "version": meta.get("version", 1),
@@ -3070,7 +3078,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.12.0（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.12.1（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")

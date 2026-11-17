@@ -19,6 +19,7 @@ agent-skill-kit/
 │  ├─ test_next.py       # 可执行前沿：波次/阻塞原因/成环/缺失引用（10 例）
 │  ├─ test_claim.py      # 认领：owner/租约锁/抢占/释放/告警（16 例）
 │  ├─ test_tasks_json.py # tasks --json 全量快照：派生依赖/认领租约/只读（7 例）
+│  ├─ test_migrate.py    # v3→v4 迁移：不覆盖/不落盘/摘要注入/手工区保留（13 例）
 │  ├─ test_install_targets.py # ps1/sh 目标一致 + 三家新目标路径（5 例，2 例按平台跳过）
 │  ├─ test_plugin_manifests.py # 两端 plugin/marketplace 清单契约（7 例）
 │  └─ test_version_sync.py # 五处版本号 + frontmatter 子命令清单 + 触发面守卫（6 例）
@@ -47,7 +48,7 @@ agent-skill-kit/
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联 + 认领/租约，支持存量补录）、可执行前沿（next：现在能做什么、被谁挡着）、认领与释放（next --claim/--release）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记、五道门一次跑完（gates）；可直接作为 Claude Code / Cursor 插件安装 | 4.12.0 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联 + 认领/租约，支持存量补录）、可执行前沿（next：现在能做什么、被谁挡着）、认领与释放（next --claim/--release）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记、五道门一次跑完（gates）；可直接作为 Claude Code / Cursor 插件安装 | 4.12.1 |
 
 ## 五道门与强制力
 
@@ -96,7 +97,7 @@ python skills/project-task-sop/sop.py next --release tests --root <项目根>
 ## 回归测试
 
 ```sh
-python -m unittest discover -s tests -v      # 112 用例，约 55 s，全部在临时目录里跑（2 例按平台跳过）
+python -m unittest discover -s tests -v      # 125 用例，约 60 s，全部在临时目录里跑（2 例按平台跳过）
 ```
 
 `sop.py` 是纯标准库实现的单文件 CLI，改完至少跑一遍：

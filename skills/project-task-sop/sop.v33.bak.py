@@ -3,6 +3,10 @@
 """
 project-task-sop CLI v3.3 — 轻量任务执行规程的机械部分。
 
+⚠ 这是 v3.3 常量存档，不是残留备份：`sop.py migrate` 的 `--old-sop` 缺省输入就是本文件
+（AST 只读解析 DIMENSIONS/ANCHOR_RULES/TASK_TYPE_DIMS/RELATED_DIMS，不执行）。
+不要删除，也不要在这里继续迭代；改迁移逻辑请改当前的 sop.py，并跑 tests/test_migrate.py。
+
 职责边界：
 - 本脚本只做"机械"工作：脚手架、锚点哈希、实验查重、记录、渲染、校验、token 估算。
 - "语义"分析（架构判断、技术栈解读等）由 AI agent 完成；脚本输出清单引导 agent 填充维度文件。

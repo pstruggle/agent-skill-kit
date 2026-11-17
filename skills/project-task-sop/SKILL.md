@@ -12,7 +12,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.12.0 — 轻量任务执行规程
+# Project Task SOP v4.12.1 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -249,5 +249,6 @@ python path/to/skills/project-task-sop/sop.py gates --root "$(git rev-parse --sh
 | 4.10.0 | 2026-11-17 | **台账驱动（P1-2）**：新增 `sop.py next [--json]`——按 `status` + `depends` 算可执行前沿（第 1 波 = 无未完成前置的 doing/pending）、后续波次（迭代松弛算层级）、阻塞原因（等谁 + 它的状态）；引用缺失或 `depends` 成环进「无法排序」而不是死循环；`dropped` 前置不阻塞后继并标注；空台账提示暂无任务。**只做约束推导，不排优先级、不推工期**（避免脚本假装懂业务）。`test_next.py`（10 例，先红后绿） |
 | 4.11.0 | 2026-11-17 | **认领（P1-2 余项 + P1-3 其一）**：`next --claim <id> [--as] [--lease] [--force]` / `--release <id>`——写 `plan.md` 的 `owner`/`claimed` + `status=doing`，并用 `ai/<task>/.claim`（`O_CREAT\|O_EXCL`）做同机原子锁、带租约（默认 120 分钟）：未到期抢占必须 `--force`，超时可接管；`tasks --check` 新增认领超时 / 有 owner 缺锁 / owner 与锁不一致 / 已完成仍留锁四类告警；台账新增「负责人」列。**边界如实写明**：同机互斥、跨机只能靠租约与 git 冲突可见，不是分布式锁。`test_claim.py`（16 例，先红后绿） |
 | 4.12.0 | 2026-11-17 | **P1-3 收尾**：`sop.py tasks --json` 只读导出全量快照（`tasks`/`unfinished`/`edges`/`stats`/`items[]`，items 带派生 `depends_open`/`depends_missing`/`blocked_by`/`claim{owner,claimed,lease,minutes_left}`），自动化不必解析 Markdown 表格；`reference/task-ledger.md` 补「多机同时认领的冲突处理」——以 `.claim` 为权威、先查告警再决定接手、接管只能走 `--claim --force`、禁止手拼 JSON，且明说不做时间戳自动仲裁。`test_tasks_json.py`（7 例，先红后绿） |
+| 4.12.1 | 2026-11-17 | **migrate 补测试并修缺陷（P2）**：此前零测试的 `migrate` 现在有 13 例。修两个真缺陷：① 默认 `attribution`（9 维）原样写入只声明 2–5 维的项目 → 迁移后 `check --context` 必报「引用未知维度 key」，现按实际维度裁剪；② 用例揭示 `codeRoot` 走 `resolve()` 后是规范长路径、老代码/测试按 8.3 短路径假设会误判（口径统一为 resolve 后比较）。同时钉住：已有 manifest 默认不覆盖、`--dry-run` 不落盘、旧索引摘要注入、AGENTS.md 只留手工区、未登记维度告警，以及 `sop.v33.bak.py` 作为缺省输入必须一直可解析（它不是残留备份）。`test_migrate.py`（13 例） |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*
