@@ -114,6 +114,35 @@ class TestVersionSync(unittest.TestCase):
         self.assertEqual(keys, sorted(keys), "版本历史表必须按版本号升序排列，实际：{}".format(rows))
         self.assertEqual(len(set(rows)), len(rows), "版本历史表存在重复版本行：{}".format(rows))
 
+    def test_skill_body_within_token_budget(self):
+        """SKILL.md 是技能被选中即整篇注入的常驻文档，必须有预算，否则会无声膨胀。
+
+        4.12.1 时实测 ~7.8k token（大半是版本历史里每版几百字的变更说明）；
+        4.12.2 把详述搬进 reference/changelog.md 后 ~5.5k。预算按整数留余量：
+        主文档 6000、changelog 4000——两者都超说明又该拆，而不是放宽阈值。
+        """
+        out = subprocess.run(
+            [sys.executable, str(SKILL.parent / "sop.py"), "tokens", str(SKILL)],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(SKILL.parent),
+        )
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        m = re.search(r"(\d+) tokens", out.stdout)
+        self.assertTrue(m, "sop.py tokens 输出格式变了，守卫失效：" + out.stdout)
+        tokens = int(m.group(1))
+        self.assertLessEqual(tokens, 6000, "SKILL.md 已涨到 {} token（预算 6000）："
+                              "把细节继续搬进 reference/，不要放宽预算".format(tokens))
+
+        log = SKILL.parent / "reference" / "changelog.md"
+        out = subprocess.run(
+            [sys.executable, str(SKILL.parent / "sop.py"), "tokens", str(log)],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(SKILL.parent),
+        )
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        m = re.search(r"(\d+) tokens", out.stdout)
+        self.assertTrue(m, "sop.py tokens 输出格式变了，守卫失效：" + out.stdout)
+        self.assertLessEqual(int(m.group(1)), 4000, "changelog 已涨到 {} token（预算 4000）："
+                              "按版本区间归档（如 changelog-v4.0-4.6.md）")
+
     def test_no_py310_only_pathlib_write_kwargs(self):
         """`Path.write_text` 的 newline 关键字是 Python 3.10+ 签名，3.9 上直接 TypeError。
 

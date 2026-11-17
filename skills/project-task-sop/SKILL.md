@@ -12,7 +12,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.12.1 — 轻量任务执行规程
+# Project Task SOP v4.12.2 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -214,41 +214,45 @@ python path/to/skills/project-task-sop/sop.py gates --root "$(git rev-parse --sh
 - `reference/process-flow-convergence.md` — **流程收敛（聚合思维）**：仅流程梳理/再造类任务读取；流程要素筛选判定表 + 流程梳理表模板
 - `reference/repo-entry-file.md` — **仓库入口文件（AGENTS.md 等）通用规范**：三种入口形态选型 / `entry`+`entryHint` 启用步骤 / 生成区与手写区分工 / 5 条 lint / 常见反模式 / 迁移检查表（仅做入口文件时读）
 - `reference/task-ledger.md` — **任务台账机制**：字段词表（status/parent/depends/relates/supersedes）/ 校验规则 / 开任务与收工流程 / **存量项目接入（`tasks --backfill`）** / 与 AGENTS.md 手写表的分工 / 常见反模式（开任务、收工、接管老项目时读）
+- `reference/changelog.md` — **版本历史详述**：每条变更的问题、修法、用例数与边界说明（本文只留主题；查"这个版本为什么这么改"时读）
 - `templates/` — 文件模板（`sop.py init` 自动引用）
 
 ## 版本历史
 
-| 版本 | 日期 | 变更 |
+> 主文档只留主题；每条的细节（问题、修法、用例数）见 `reference/changelog.md`。
+
+| 版本 | 日期 | 主题 |
 |------|------|------|
 | 1.0.0 | 2026-08-20 | 初始 5 步流程、8 维度、3 模板 |
-| 2.0.0 | 2026-08-21 | 模块化上下文、双轨实验索引、增量刷新 |
-| 3.0.0 | 2026-08-23 | 决策门 light/standard/full；JSONL 单一事实源；真实 CLI sop.py；主文档瘦身；锚点哈希修复增量检测 |
-| 3.1.0 | 2026-08-23 | 教训沉淀条目 + sop.py lessons 检索；mark-fresh 自动记录上下文 token 估算 |
-| 3.2.0 | 2026-10-27 | 新增启动前边界对齐门；允许只读调查；直接执行例外须记录关键假设 |
-| 3.3.0 | 2026-10-28 | 维度 9「项目级教训」：跨任务重复教训升级为常驻维度（所有任务必读）；sop.py/模板/DIMS 同步；新增 reference/project-lessons.md |
-| 4.0.0 | 2026-10-28 | **manifest 驱动**：维度体系（集合/锚点 glob/任务映射）下沉为 ai/context.manifest.json；sop.py 纯执行化（init/refresh/check --context/dims）；AGENTS.md 分区生成（marker 生成区 + 手工区）；维度文件头部「摘要」字段；锚点相对 codeRoot 解析。设计稿：jiakao 项目 ai/sop-v4-manifest-design-2026-10-28.md |
-| 4.1.0 | 2026-10-28 | **migrate 子命令**（v3 → v4 半自动迁移：AST 解析旧常量 → manifest + 摘要行 + AGENTS.md 分区）；新增 reference/migration-v3-to-v4.md |
-| 4.2.0 | 2026-10-29 | **维度归属判定表**（§1.5，信息类型→维度 + 反例排除，唯一权威）；`sop.py audit` 子命令（扫环境事实误入教训维度/跨维度重复/交叉引用失效）；09 维度门槛补反例排除 |
-| 4.3.0 | 2026-10-29 | **对抗自查清单**（§0.1.1，分级触发、挂边界对齐门后、力度由决策门决定）；NOTES 决策点前置自查；DoD 新增对抗自查验收项 |
-| 4.4.0 | 2026-10-29 | **归属判定动态化**：§1.5 表下沉为 manifest `attribution`（信息类型→维度 key，init 写入、可覆盖，audit 从它读取）；audit 合法维度集合不再硬编码编号；check --context 校验 attribution 引用的 key 存在；migrate 生成默认 attribution |
-| 4.5.0 | 2026-10-29 | **流程收敛参考**：新增 reference/process-flow-convergence.md（聚合思维工具，仅流程梳理/再造类任务按需加载；含流程要素筛选判定表 + 流程梳理表模板）；参考文档列表登记 |
-| 4.5.1 | 2026-11-15 | **锚点抽样修复**：`anchor_sources()` 不再"字母序前 20 个即 return"静默截断（大目录里排在后面的文件永不参与过期检测），改为**全量命中后均匀抽样 + 显式告警**，并支持维度字段 `anchorLimit`（0=不设上限）覆盖默认 20；**`refresh --only`** 支持按维度选择性封存（此前 `--mark-fresh` 只能全局封存，与"只看某维度"的复核纪律冲突） |
-| 4.5.2 | 2026-11-15 | **锚点扫描性能修复**：`glob_hits()` 改为**先剪枝的 `os.walk` + fnmatch 匹配**（按 codeRoot 缓存，全部维度共用一次遍历）；此前 `glob.glob(recursive=True)` 先遍历全树再过滤 `IGNORED_DIRS`，在含 `node_modules` 的单仓上单次 glob 即卡死数分钟，`check --context` / `refresh` 实际不可用。语义保持：返回相对 codeRoot 的 posix 排序列表、跳过忽略目录、`**/x` 同时匹配根级 x |
-| 4.6.0 | 2026-11-15 | **仓库入口文件通用能力**：新增 `sop.py entry`（`--check/--force/--out`）——由 manifest 可选 `entry` 配置 + 各维度可选 `entryHint` 渲染入口文件生成区（纪律索引 + 任务→维度路由 + 维护契约），手写区（`ENTRY-MANUAL`）不受影响；`--check` 做 5 条 lint（行数上限/权威声明/凭据关键词/绝对家目录/时效性状态 + 超长行告警）；`check --context` 顺带告警。含 `reference/repo-entry-file.md`（通用规范，零项目信息） |
-| 4.7.0 | 2026-11-15 | **任务台账**：新增 `sop.py tasks`（扫 `ai/*/plan.md` 字段表 status/parent/depends/relates/supersedes/updated → 渲染 `ai/TASKS.md`；`--check` 校验状态枚举/id 唯一/引用存在/depends 成环/台账与 plan.md 同步）；`refresh --mark-fresh` 顺带同步、`check --context` 顺带告警；plan 模板加台账字段；`entry.file` 支持 `../AGENTS.md`（入口放到 ai 同级，ai 不进版本库时的推荐形态）；含 `reference/task-ledger.md` |
-| 4.7.1 | 2026-11-16 | **入口落点决策门**：`sop.py entry` 生成前必须由人确认落点（仓根 / 与 `ai/` 同级 / 项目自定义路径），结论记入 `plan.md` 的 assumptions 或 NOTES；工具打印「entry 落点: …（仓库内/仓库外）」并在「ai/ 在仓库外 + 落点仍在仓库内」时额外提示断链风险；`reference/repo-entry-file.md` 新增 §2.1 落点判据表与询问话术，形态表补「薄壳 + 全量并存」 |
-| 4.7.2 | 2026-11-16 | **存量项目接入台账**：`sop.py tasks --backfill [--dry-run] [--status S] [--no-suggest]`——给缺台账字段的老 `plan.md` 幂等补行；`status` 仅在 `NOTES.md` 有验收/收工证据时推断 `done`，其余落缺省并列入「需人工确认」；`updated` 取 plan.md mtime；跨任务关系建议只打印不写入；`reference/task-ledger.md` 新增「存量项目接入」小节 |
-| 4.7.3 | 2026-11-16 | **文档与元数据同步**：frontmatter `description` 补齐 `entry/tasks/migrate` 与两个新增能力关键词（原描述缺入口与台账，技能目录匹配不到）；`sop.py` docstring 命令清单补 `entry`/`tasks`、版本号 4.0 → 4.7.3（`--help` 与 docstring 口径一致）；README 补 42 用例数、`LICENSE`、`reference/`/`templates/` 数量、`tasks --backfill --dry-run` 提示、`ai/` 与 `.experiments.jsonl` 被 gitignore 的说明（入口为何不能放仓内的原因链）|
-| 4.7.4 | 2026-11-17 | **CI 与版本同步守卫**：新增 `.github/workflows/test.yml`（ubuntu/windows × Python 3.9/3.13，跑 stdlib 回归 + `sop.py --help` 烟测；`check --context`/`entry`/`tasks` 四道门依赖 `ai/`，不进 CI）；新增 `tests/test_version_sync.py` 把版本漂移变成红灯——五处版本号（SKILL 标题 / 历史表末行 / README 技能表 / docstring / `--help`）必须相同、历史表必须升序无重复、frontmatter `description` 必须列出全部子命令；docstring 兼容性声明由 Python 3.8+ 修正为 3.9+ |
-| 4.7.5 | 2026-11-17 | **Python 3.9 兼容修复 + CI 矩阵修正**（CI 首跑即抓到）：`Path.write_text(newline=)` 是 3.10+ 签名，3.9 上 TypeError 导致台账/计划/入口文件全部写不出 → 统一改走新增的 `write_text_lf()`（显式 `open(..., newline="\n")`，同时保证跨平台只落 LF）；CI 的 3.9 格由 `ubuntu-latest` 改钉 `ubuntu-22.04`（26.04 已无 3.9 构建）；新增守卫用例 `test_no_py310_only_pathlib_write_kwargs`（vermin 查不出关键字参数，只能文本守卫） |
-| 4.8.0 | 2026-11-17 | **init 后自动推导（scan）**：新增 `sop.py scan [--dry-run] [--force] [--only]`——按 codeRoot 实际文件（语言/构建清单/锁文件/测试/CI/文档/工作流/顶层目录/git 分支）填充维度 1/2/4/5/6/8 的事实清单，标「自动推导，待复核」，架构/教训等语义判断仍归人工；仅当某维度锚点当前 0 命中时改 manifest `anchors`（改为真实文件或置空=改为手动维护），修掉「init 后在真实项目上 `check --context` 必然因锚点失效而失败」；默认不覆盖已有手工正文（`--force` 才覆盖），二次运行幂等；`ai/AGENTS.md` 身份表只替换「待分析」格；新增 `tests/test_scan.py`（10 例，先红后绿） |
-| 4.8.1 | 2026-11-17 | **触发面（P0-1）**：frontmatter `description` 由「功能清单」改为「场景 + 口语触发语」（接着上次做 / 这个仓库之前怎么改的 / 别重复踩坑 / 上下文过期了吗 / 任务排一下…），命令枚举压缩为末尾一行、仍覆盖全部子命令；`whenToUse` 4 条抽象场景改写为 7 条用户原话；新增两条守卫（触发语 ≥4 条且 description ≤800 字符、whenToUse ≥3 条口语），防止下次改描述又退回能力罗列 |
-| 4.8.2 | 2026-11-17 | **分发面（P0-3 其一）**：两个安装器新增 `cursor`（`~/.cursor/skills` / `<project>/.cursor/skills`）、`gemini`（`~/.gemini/skills` / `<project>/.gemini/skills`）、`copilot`（个人 `~/.copilot/skills`；项目级 `<project>/.github/skills`，不是 `.copilot`）；`all` 由 5 类扩到 7 类；`install.sh` 的 usage 改为取到首个空行，避免后续加行把帮助截断；新增 `tests/test_install_targets.py`（两安装器目标集合一致 + 三家用户级/项目级路径，2 例按平台跳过） |
-| 4.8.3 | 2026-11-17 | **plugin 打包（P0-3 其二）**：仓库根同时充当两种插件根（`skills/` 已在根，两端默认发现规则都成立），新增 `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` 与 `.cursor-plugin/plugin.json` + `.cursor-plugin/marketplace.json`；marketplace 只有一个条目、`source: "."`（插件根=仓库根），用户安装为 `project-task-sop@agent-skill-kit`；`plugin.json` 的 `version` 写死就必须每次 bump（Claude Code 拿它当缓存键），故与 SKILL 标题同源并由新增的 `tests/test_plugin_manifests.py`（7 例）守住——名称 kebab-case、`skills/<name>/SKILL.md` 真实存在、两端 name/version 一致、marketplace 必填项与 `source` 可解析、每个技能目录名=frontmatter name |
-| 4.9.0 | 2026-11-17 | **强制力（P1-1）**：新增 `sop.py gates [--json] [--skip-if-missing]`——把 context / dims（过期）/ audit / entry / tasks 五道门压成一次调用、一个退出码，逐项打 ✅❌~ 并附修法，任一失败退出码 1；`--json` 输出单行机器可读结果；`--skip-if-missing` 让未接入 SOP 的项目安静放行，于是能挂进全局 pre-commit 与 Claude Code hook（片段见 SKILL.md「强制力」小节，**默认不自动安装**）。同时把 `refresh` 的过期判定抽成 `collect_stale()` 供两处共用（两条路径各算一遍迟早会漂）；`test_gates.py`（9 例，先红后绿，含 entry 未配置=跳过的语义） |
-| 4.10.0 | 2026-11-17 | **台账驱动（P1-2）**：新增 `sop.py next [--json]`——按 `status` + `depends` 算可执行前沿（第 1 波 = 无未完成前置的 doing/pending）、后续波次（迭代松弛算层级）、阻塞原因（等谁 + 它的状态）；引用缺失或 `depends` 成环进「无法排序」而不是死循环；`dropped` 前置不阻塞后继并标注；空台账提示暂无任务。**只做约束推导，不排优先级、不推工期**（避免脚本假装懂业务）。`test_next.py`（10 例，先红后绿） |
-| 4.11.0 | 2026-11-17 | **认领（P1-2 余项 + P1-3 其一）**：`next --claim <id> [--as] [--lease] [--force]` / `--release <id>`——写 `plan.md` 的 `owner`/`claimed` + `status=doing`，并用 `ai/<task>/.claim`（`O_CREAT\|O_EXCL`）做同机原子锁、带租约（默认 120 分钟）：未到期抢占必须 `--force`，超时可接管；`tasks --check` 新增认领超时 / 有 owner 缺锁 / owner 与锁不一致 / 已完成仍留锁四类告警；台账新增「负责人」列。**边界如实写明**：同机互斥、跨机只能靠租约与 git 冲突可见，不是分布式锁。`test_claim.py`（16 例，先红后绿） |
-| 4.12.0 | 2026-11-17 | **P1-3 收尾**：`sop.py tasks --json` 只读导出全量快照（`tasks`/`unfinished`/`edges`/`stats`/`items[]`，items 带派生 `depends_open`/`depends_missing`/`blocked_by`/`claim{owner,claimed,lease,minutes_left}`），自动化不必解析 Markdown 表格；`reference/task-ledger.md` 补「多机同时认领的冲突处理」——以 `.claim` 为权威、先查告警再决定接手、接管只能走 `--claim --force`、禁止手拼 JSON，且明说不做时间戳自动仲裁。`test_tasks_json.py`（7 例，先红后绿） |
-| 4.12.1 | 2026-11-17 | **migrate 补测试并修缺陷（P2）**：此前零测试的 `migrate` 现在有 13 例。修两个真缺陷：① 默认 `attribution`（9 维）原样写入只声明 2–5 维的项目 → 迁移后 `check --context` 必报「引用未知维度 key」，现按实际维度裁剪；② 用例揭示 `codeRoot` 走 `resolve()` 后是规范长路径、老代码/测试按 8.3 短路径假设会误判（口径统一为 resolve 后比较）。同时钉住：已有 manifest 默认不覆盖、`--dry-run` 不落盘、旧索引摘要注入、AGENTS.md 只留手工区、未登记维度告警，以及 `sop.v33.bak.py` 作为缺省输入必须一直可解析（它不是残留备份）。`test_migrate.py`（13 例） |
+| 2.0.0 | 2026-08-21 | 模块化上下文、双轨实验、增量刷新 |
+| 3.0.0 | 2026-08-23 | 决策门 light/standard/full + 真实 CLI |
+| 3.1.0 | 2026-08-23 | 教训沉淀与 `lessons` 检索 |
+| 3.2.0 | 2026-10-27 | 启动前边界对齐门 |
+| 3.3.0 | 2026-10-28 | 维度 9「项目级教训」常驻 |
+| 4.0.0 | 2026-10-28 | manifest 驱动维度体系 |
+| 4.1.0 | 2026-10-28 | `migrate` v3→v4 迁移 |
+| 4.2.0 | 2026-10-29 | 维度归属表 + `audit` |
+| 4.3.0 | 2026-10-29 | 对抗自查清单 |
+| 4.4.0 | 2026-10-29 | attribution 归属动态化 |
+| 4.5.0 | 2026-10-29 | 流程收敛参考文档 |
+| 4.5.1 | 2026-11-15 | 锚点抽样修复 + `refresh --only` |
+| 4.5.2 | 2026-11-15 | 锚点扫描性能修复 |
+| 4.6.0 | 2026-11-15 | `entry` 仓库入口文件生成 |
+| 4.7.0 | 2026-11-15 | 任务台账 `tasks` |
+| 4.7.1 | 2026-11-16 | 入口落点决策门 |
+| 4.7.2 | 2026-11-16 | 台账存量补录 `--backfill` |
+| 4.7.3 | 2026-11-16 | 文档与元数据同步 |
+| 4.7.4 | 2026-11-17 | CI 与版本同步守卫 |
+| 4.7.5 | 2026-11-17 | Python 3.9 兼容 + CI 矩阵 |
+| 4.8.0 | 2026-11-17 | `scan` init 后自动推导 |
+| 4.8.1 | 2026-11-17 | 触发面改写（P0-1） |
+| 4.8.2 | 2026-11-17 | 安装器分发面（P0-3） |
+| 4.8.3 | 2026-11-17 | plugin 双端打包（P0-3） |
+| 4.9.0 | 2026-11-17 | `gates` 五道门（P1-1） |
+| 4.10.0 | 2026-11-17 | `next` 可执行前沿（P1-2） |
+| 4.11.0 | 2026-11-17 | 认领与租约（P1-2/P1-3） |
+| 4.12.0 | 2026-11-17 | `tasks --json`（P1-3 收尾） |
+| 4.12.1 | 2026-11-17 | `migrate` 补测试修缺陷（P2） |
+| 4.12.2 | 2026-11-17 | 主文档瘦身 + token 预算守卫（P2） |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

@@ -34,7 +34,7 @@ agent-skill-kit/
 │  └─ project-task-sop/
 │     ├─ SKILL.md
 │     ├─ sop.py
-│     ├─ reference/      # 8 篇按需加载的规范（入口 / 台账 / 教训 / 迁移 …）
+│     ├─ reference/      # 9 篇按需加载的规范（入口 / 台账 / 教训 / 迁移 / 版本详述 …）
 │     └─ templates/      # 4 个产物模板（plan / NOTES / 索引 / 维度）
 ├─ .gitattributes        # 统一 LF、UTF-8
 ├─ .gitignore            # 忽略各 Agent 的本地安装产物 + 项目 ai/ 上下文
@@ -48,7 +48,7 @@ agent-skill-kit/
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联 + 认领/租约，支持存量补录）、可执行前沿（next：现在能做什么、被谁挡着）、认领与释放（next --claim/--release）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记、五道门一次跑完（gates）；可直接作为 Claude Code / Cursor 插件安装 | 4.12.1 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联 + 认领/租约，支持存量补录）、可执行前沿（next：现在能做什么、被谁挡着）、认领与释放（next --claim/--release）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记、五道门一次跑完（gates）；可直接作为 Claude Code / Cursor 插件安装 | 4.12.2 |
 
 ## 五道门与强制力
 
@@ -97,7 +97,7 @@ python skills/project-task-sop/sop.py next --release tests --root <项目根>
 ## 回归测试
 
 ```sh
-python -m unittest discover -s tests -v      # 125 用例，约 60 s，全部在临时目录里跑（2 例按平台跳过）
+python -m unittest discover -s tests -v      # 126 用例，约 60 s，全部在临时目录里跑（2 例按平台跳过）
 ```
 
 `sop.py` 是纯标准库实现的单文件 CLI，改完至少跑一遍：
