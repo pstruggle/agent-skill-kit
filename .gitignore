@@ -3,6 +3,9 @@
 .agents/
 .claude/
 .codex/
+.cursor/
+.gemini/
+.github/skills/
 
 # Runtime artifacts produced by the skills themselves
 ai/

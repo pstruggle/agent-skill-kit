@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.8.2 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.8.3 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -2539,7 +2539,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.8.2（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.8.3（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")

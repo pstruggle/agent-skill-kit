@@ -12,7 +12,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.8.2 — 轻量任务执行规程
+# Project Task SOP v4.8.3 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -212,5 +212,6 @@ ai/
 | 4.8.0 | 2026-11-17 | **init 后自动推导（scan）**：新增 `sop.py scan [--dry-run] [--force] [--only]`——按 codeRoot 实际文件（语言/构建清单/锁文件/测试/CI/文档/工作流/顶层目录/git 分支）填充维度 1/2/4/5/6/8 的事实清单，标「自动推导，待复核」，架构/教训等语义判断仍归人工；仅当某维度锚点当前 0 命中时改 manifest `anchors`（改为真实文件或置空=改为手动维护），修掉「init 后在真实项目上 `check --context` 必然因锚点失效而失败」；默认不覆盖已有手工正文（`--force` 才覆盖），二次运行幂等；`ai/AGENTS.md` 身份表只替换「待分析」格；新增 `tests/test_scan.py`（10 例，先红后绿） |
 | 4.8.1 | 2026-11-17 | **触发面（P0-1）**：frontmatter `description` 由「功能清单」改为「场景 + 口语触发语」（接着上次做 / 这个仓库之前怎么改的 / 别重复踩坑 / 上下文过期了吗 / 任务排一下…），命令枚举压缩为末尾一行、仍覆盖全部子命令；`whenToUse` 4 条抽象场景改写为 7 条用户原话；新增两条守卫（触发语 ≥4 条且 description ≤800 字符、whenToUse ≥3 条口语），防止下次改描述又退回能力罗列 |
 | 4.8.2 | 2026-11-17 | **分发面（P0-3 其一）**：两个安装器新增 `cursor`（`~/.cursor/skills` / `<project>/.cursor/skills`）、`gemini`（`~/.gemini/skills` / `<project>/.gemini/skills`）、`copilot`（个人 `~/.copilot/skills`；项目级 `<project>/.github/skills`，不是 `.copilot`）；`all` 由 5 类扩到 7 类；`install.sh` 的 usage 改为取到首个空行，避免后续加行把帮助截断；新增 `tests/test_install_targets.py`（两安装器目标集合一致 + 三家用户级/项目级路径，2 例按平台跳过） |
+| 4.8.3 | 2026-11-17 | **plugin 打包（P0-3 其二）**：仓库根同时充当两种插件根（`skills/` 已在根，两端默认发现规则都成立），新增 `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` 与 `.cursor-plugin/plugin.json` + `.cursor-plugin/marketplace.json`；marketplace 只有一个条目、`source: "."`（插件根=仓库根），用户安装为 `project-task-sop@agent-skill-kit`；`plugin.json` 的 `version` 写死就必须每次 bump（Claude Code 拿它当缓存键），故与 SKILL 标题同源并由新增的 `tests/test_plugin_manifests.py`（7 例）守住——名称 kebab-case、`skills/<name>/SKILL.md` 真实存在、两端 name/version 一致、marketplace 必填项与 `source` 可解析、每个技能目录名=frontmatter name |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

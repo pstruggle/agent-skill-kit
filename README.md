@@ -15,9 +15,16 @@ agent-skill-kit/
 ├─ tests/
 │  ├─ test_sop.py        # sop.py 命令行回归（42 例）
 │  ├─ test_scan.py       # init 后自动推导 scan 的行为契约（10 例）
+│  ├─ test_install_targets.py # ps1/sh 目标一致 + 三家新目标路径（5 例，2 例按平台跳过）
+│  ├─ test_plugin_manifests.py # 两端 plugin/marketplace 清单契约（7 例）
 │  └─ test_version_sync.py # 五处版本号 + frontmatter 子命令清单 + 触发面守卫（6 例）
-│  └─ test_install_targets.py # ps1/sh 目标一致 + 三家新目标路径（5 例，2 例按平台跳过）
-│                        # 合计 63 例，标准库 unittest，无第三方依赖
+│                        # 合计 70 例，标准库 unittest，无第三方依赖
+├─ .claude-plugin/       # Claude Code 插件清单 + 市场目录
+│  ├─ plugin.json
+│  └─ marketplace.json
+├─ .cursor-plugin/       # Cursor 插件清单 + 市场索引
+│  ├─ plugin.json
+│  └─ marketplace.json
 ├─ skills/               # 唯一事实源：每个技能一个目录
 │  └─ project-task-sop/
 │     ├─ SKILL.md
@@ -36,12 +43,12 @@ agent-skill-kit/
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记 | 4.8.2 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记；可直接作为 Claude Code / Cursor 插件安装 | 4.8.3 |
 
 ## 回归测试
 
 ```sh
-python -m unittest discover -s tests -v      # 63 用例，约 31 s，全部在临时目录里跑（2 例按平台跳过）
+python -m unittest discover -s tests -v      # 70 用例，约 36 s，全部在临时目录里跑（2 例按平台跳过）
 ```
 
 `sop.py` 是纯标准库实现的单文件 CLI，改完至少跑一遍：
@@ -163,6 +170,35 @@ python <skill-installer>/scripts/install-skill-from-github.py \
   --path skills/project-task-sop
 ```
 
+## 作为插件安装（Claude Code / Cursor）
+
+仓库根同时是插件根：`skills/` 就在根上，两端默认发现规则都是在插件根找 `skills/<name>/SKILL.md`，所以同一份源文件既能用安装器投递，也能整仓当插件装。
+
+Claude Code：
+
+```sh
+claude plugin marketplace add pstruggle/agent-skill-kit   # 把本仓库登记为 marketplace（名字 agent-skill-kit）
+claude plugin install project-task-sop@agent-skill-kit   # 安装插件，格式：条目名@市场名
+```
+
+会话内等价指令是 `/plugin marketplace add …` 与 `/plugin install …`；技能调用时带插件名前缀。
+
+Cursor：
+
+- 单机试用：把本仓拷到 `~/.cursor/plugins/local/project-task-sop/`，重启 Cursor（或 `Developer: Reload Window`），在 **Customize** 里确认技能出现；
+- 团队/市场分发：**Dashboard → Plugins & MCPs → Add Marketplace → Import from Repo** 填本仓库 URL（Team / Enterprise 计划才有团队市场）；上架公开市场走 `cursor.com/marketplace/publish`，由 Cursor 人工审核。
+
+四份清单各管什么：
+
+| 文件 | 作用 |
+|------|------|
+| `.claude-plugin/plugin.json` | Claude 插件清单：`name` 是唯一必填项；`version` 写死后就是更新缓存键，**每次发版必须 bump**，省略则退化为 git commit SHA |
+| `.claude-plugin/marketplace.json` | Claude 市场目录：`name` / `owner` / `plugins` 必填；条目 `source: "."` 表示插件就是仓库根 |
+| `.cursor-plugin/plugin.json` | Cursor 插件清单：`name` 必填（小写 kebab-case）；`skills/` 默认发现 |
+| `.cursor-plugin/marketplace.json` | 多插件仓库的市场索引：`name` / `owner` / `plugins`（≤500 条），`metadata` 可选 |
+
+**还没验证的部分**：本机没有 `claude` CLI，也没有 Cursor，所以 `claude plugin validate` 与真实安装流程都没跑过。能自证的是 `tests/test_plugin_manifests.py` 覆盖的那些——JSON 可解析、名称合规、`skills/<name>/SKILL.md` 真实存在、两端 `name` 与 `version` 同源、marketplace 的 `source` 能解析到插件根。
+
 ## 新增一个技能
 
 1. 在 `skills/` 下新建目录，目录名用 kebab-case（`^[a-z0-9]+(?:-[a-z0-9]+)*$`）。
@@ -172,7 +208,7 @@ python <skill-installer>/scripts/install-skill-from-github.py \
 
 ## 设计约定
 
-- `skills/` 是唯一事实源；`.dsh/`、`.codex/`、`.claude/`、`.agents/` 都是安装产物，已在 `.gitignore` 中排除。
+- `skills/` 是唯一事实源；`.dsh/`、`.codex/`、`.claude/`、`.agents/`、`.cursor/`、`.gemini/`、`.github/skills/` 都是 `-Scope project` 的安装产物，已在 `.gitignore` 中排除——不排除的话，项目级安装会往仓库里塞一堆不该入库的技能副本。
 - `ai/` 与 `.experiments.jsonl` 同样在 `.gitignore` 里：上下文体系统一留在项目目录、不随仓库分发——这也是「仓库内不放 `AGENTS.md`」的原因（仓根入口会指向 clone 者看不到的 `ai/context`）。
 - `link` 模式便于边改边用；`copy` 模式便于固定版本、避免被测 Agent 直接改到源文件。
 - 所有文本文件按 LF 存储、UTF-8 无 BOM 编码（见 `.gitattributes`），中文内容在 Windows 下也不会乱码。
@@ -190,7 +226,9 @@ cd agent-skill-kit
 
 Run `--list` to see the skills and destinations, `--mode link` to symlink instead of copy, `--uninstall` to remove, `--help` for the full flag list.
 
-Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / scan / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/` (stdlib `unittest`, 63 cases, no third-party deps).
+Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / scan / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/` (stdlib `unittest`, 70 cases, no third-party deps).
+
+The repo root doubles as a plugin root for both Claude Code (`.claude-plugin/`) and Cursor (`.cursor-plugin/`): register it with `claude plugin marketplace add pstruggle/agent-skill-kit`, then `claude plugin install project-task-sop@agent-skill-kit`.
 
 ## 许可证
 

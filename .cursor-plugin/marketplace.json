@@ -1,0 +1,19 @@
+{
+  "name": "agent-skill-kit",
+  "owner": {
+    "name": "pstruggle"
+  },
+  "metadata": {
+    "description": "跨 Agent 复用的技能包：一份技能源文件，投递到 Claude Code、Cursor、Codex、Gemini CLI、Copilot 等工具。"
+  },
+  "plugins": [
+    {
+      "name": "project-task-sop",
+      "source": ".",
+      "description": "多会话、多 Agent 项目的上下文与任务台账规程，让下一个会话不用重新摸清仓库。",
+      "author": {
+        "name": "pstruggle"
+      }
+    }
+  ]
+}
