@@ -23,6 +23,17 @@ README = REPO / "README.md"
 
 V = r"(\d+\.\d+\.\d+)"
 
+# P0-1 的验收口径：description 是"何时触发"，不是"功能清单"。
+# 这些是用户真实会说的口语，缺了它们说明描述又退回了能力罗列。
+TRIGGER_PHRASES = [
+    "接着上次",
+    "之前怎么改",
+    "重复踩坑",
+    "上下文过期",
+    "任务排一下",
+    "接下来做哪个",
+]
+
 
 def skill_title_version() -> str:
     for line in SKILL.read_text(encoding="utf-8").splitlines():
@@ -121,6 +132,40 @@ class TestVersionSync(unittest.TestCase):
         desc = frontmatter_description()
         missing = [s for s in subcommands if s not in desc]
         self.assertEqual(missing, [], "frontmatter description 缺少子命令：{}（技能目录会匹配不到这些能力）".format(missing))
+
+    def test_description_contains_trigger_phrases(self):
+        """P0-1：description 必须能被用户的口语命中。
+
+        真实漂移：4.8.0 前 description 是"轻量项目任务执行规程：启动前边界对齐、规模决策门…"，
+        全是能力项，用户说"接着上次做"匹配不到；`whenToUse` 也只有抽象场景。
+        """
+        desc = frontmatter_description()
+        hits = [p for p in TRIGGER_PHRASES if p in desc]
+        self.assertGreaterEqual(len(hits), 4,
+                                "description 里口语触发语不足 4 条（当前 {} 条：{}）。应写成"
+                                "「场景 + 触发语」，而不是功能清单".format(len(hits), hits))
+        self.assertLessEqual(len(desc), 800, "description 过长（{} 字符），触发面会被人名/命令清单稀释".format(len(desc)))
+
+    def test_when_to_use_entries_are_concrete(self):
+        """`whenToUse` 每条应是用户能说出口的话，不是抽象场景名。"""
+        lines = SKILL.read_text(encoding="utf-8").splitlines()
+        start = None
+        for i, ln in enumerate(lines):
+            if ln.startswith("whenToUse:"):
+                start = i
+                break
+        self.assertIsNotNone(start, "frontmatter 缺少 whenToUse")
+        items = []
+        for ln in lines[start + 1:]:
+            if ln.strip() == "---" or (ln and not ln.startswith((" ", "\t", "-"))):
+                break
+            if ln.strip().startswith("- "):
+                items.append(ln.strip()[2:])
+        self.assertGreaterEqual(len(items), 5, "whenToUse 条目过少：{}".format(items))
+        quoted = [s for s in items if "「" in s or "“" in s or '"' in s]
+        self.assertGreaterEqual(len(quoted), 3,
+                                "whenToUse 至少 3 条要写成口语触发（带引号的原话），当前只有 {} 条：{}".format(
+                                    len(quoted), items))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.7.5 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.8.2 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -15,6 +15,7 @@ v4 核心变更（2026-10-28，不兼容 v3.x）：
 
 命令：
   init               初始化 ai/ 结构与维度文件（manifest 缺失时写入内置 9 维度建议集）
+  scan               init 后自动推导：按 codeRoot 实际文件填 1/2/4/5/6/8 事实初稿 + 修 0 命中锚点（--dry-run/--force/--only）
   refresh            按 manifest 锚点检测过期维度 [--mark-fresh 封存 + 重写 AGENTS.md 生成区]
   entry              生成/校验仓库入口文件（生成区=纪律索引+任务路由，手写区不动；--check 5 条 lint）
   tasks              任务台账：扫各任务 plan.md 字段表聚合 ai/TASKS.md [--check 校验 / --backfill 存量补录]
@@ -542,7 +543,7 @@ BUILTIN_INDEX_TEMPLATE = """# Project Context: {{projectName}}
 
 BUILTIN_DIM_TEMPLATE = """# Dimension {{dimensionNumber}}: {{dimensionTitle}}
 
-> **维度元数据**：生成于 {{timestamp}} | 置信度 {{confidence}} | 技能 v4.0
+> **维度元数据**：生成于 {{timestamp}} | 置信度 {{confidence}} | 技能 v4.8
 > **变更锚点**: {{anchorsJson}}
 > **摘要**: 待分析
 
@@ -611,6 +612,7 @@ def cmd_init(args) -> int:
         }
         write_text_lf(idx_path, render_template(tmpl, values))
         print("  + ai/AGENTS.md")
+    print("\n下一步：python sop.py scan（按项目实际自动推导维度初稿）")
     return 0
 
 
@@ -785,6 +787,540 @@ def cmd_context_check(root: Path) -> int:
     print("manifest: {} 维度 / {} 任务类型".format(len(ids), len(mf["taskTypes"])))
     print("✅ 上下文校验通过" if ok else "❌ 存在问题（见上）")
     return 0 if ok else 1
+
+
+# ---------------------------------------------------------------------------
+# 命令：scan（init 后自动推导维度初稿 + 修复 0 命中锚点）
+# ---------------------------------------------------------------------------
+
+SCAN_KEYS = ("topology", "tech-stack", "docs-assets", "quality-system",
+             "dependencies", "dev-workflow")
+DIM_TEMPLATE_VERSION = "4.8"
+AUTO_MARK = "自动推导"
+
+EXT_LANGS = (
+    (".py", "Python"), (".pyi", "Python"), (".js", "JavaScript"), (".mjs", "JavaScript"),
+    (".cjs", "JavaScript"), (".jsx", "JavaScript"), (".ts", "TypeScript"),
+    (".tsx", "TypeScript"), (".vue", "Vue"), (".svelte", "Svelte"), (".java", "Java"),
+    (".kt", "Kotlin"), (".go", "Go"), (".rs", "Rust"), (".php", "PHP"), (".rb", "Ruby"),
+    (".cs", "C#"), (".swift", "Swift"), (".dart", "Dart"), (".cpp", "C++"),
+    (".cc", "C++"), (".c", "C"), (".scala", "Scala"), (".ex", "Elixir"),
+    (".exs", "Elixir"), (".lua", "Lua"), (".sh", "Shell"), (".ps1", "PowerShell"),
+)
+
+BUILD_FILES = ("package.json", "pyproject.toml", "setup.py", "setup.cfg",
+               "requirements.txt", "go.mod", "Cargo.toml", "pom.xml",
+               "build.gradle", "build.gradle.kts", "composer.json", "Gemfile",
+               "pubspec.yaml", "CMakeLists.txt", "mix.exs")
+
+LOCK_FILES = ("pnpm-lock.yaml", "yarn.lock", "package-lock.json", "bun.lockb",
+              "bun.lock", "poetry.lock", "uv.lock", "Pipfile.lock", "requirements.txt",
+              "Cargo.lock", "go.sum", "composer.lock", "Gemfile.lock")
+
+DEV_FILES = ("Makefile", "makefile", "GNUmakefile", "justfile", "Taskfile.yml",
+             "Taskfile.yaml", "docker-compose.yml", "docker-compose.yaml", "compose.yml",
+             "Dockerfile", ".nvmrc", ".python-version", ".tool-versions", ".editorconfig")
+
+DOC_BASENAMES = ("README.md", "README.en.md", "README.rst", "README",
+                 "CHANGELOG.md", "CHANGELOG", "CONTRIBUTING.md", "ARCHITECTURE.md",
+                 "SECURITY.md", "AGENTS.md", "LICENSE")
+
+TEST_DIR_RE = re.compile(r"^(tests?|__tests__|spec)/")
+
+TEST_FILE_RES = (
+    re.compile(r"^test_.*\.py$"), re.compile(r".*_test\.py$"),
+    re.compile(r".*_test\.go$"), re.compile(r".*\.(test|spec)\.(js|jsx|ts|tsx|mjs|cjs)$"),
+    re.compile(r".*Test\.java$"), re.compile(r".*\.(spec|test)\.rb$"),
+)
+
+NODE_FRAME_MAP = {
+    "react": "React", "react-dom": "React", "next": "Next.js", "vue": "Vue",
+    "nuxt": "Nuxt", "vite": "Vite", "svelte": "Svelte", "express": "Express",
+    "koa": "Koa", "fastify": "Fastify", "@angular/core": "Angular",
+    "@nestjs/core": "NestJS", "uni-app": "uni-app", "@dcloudio/uni-app": "uni-app",
+}
+PY_FRAME_MAP = {
+    "fastapi": "FastAPI", "django": "Django", "flask": "Flask", "pydantic": "Pydantic",
+    "sqlalchemy": "SQLAlchemy", "celery": "Celery", "torch": "PyTorch",
+    "tensorflow": "TensorFlow", "pytest": "pytest", "ruff": "ruff", "mypy": "mypy",
+}
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _read_json(path: Path) -> dict:
+    text = _read_text(path)
+    if not text.strip():
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _basename(rel: str) -> str:
+    return rel.rsplit("/", 1)[-1]
+
+
+def _dedup(items) -> list:
+    out = []
+    for it in items:
+        if it and it not in out:
+            out.append(it)
+    return out
+
+
+def _git_facts(code_root: Path) -> dict:
+    """只读 .git/HEAD 与 config（不调用 git 命令，避免引入 subprocess 依赖）。"""
+    out = {"branch": "", "remote": ""}
+    head = _read_text(code_root / ".git" / "HEAD").strip()
+    if head.startswith("ref:"):
+        out["branch"] = head.split("/")[-1].strip()
+    cfg = _read_text(code_root / ".git" / "config")
+    m = re.search(r'\[remote "origin"\][^\[]*?url\s*=\s*(\S+)', cfg, re.S)
+    if m:
+        out["remote"] = m.group(1).strip()
+    return out
+
+
+def detect_facts(code_root: Path) -> dict:
+    """扫 codeRoot，只产出"事实"（文件、清单、命令），不做架构判断。"""
+    files = _walk_files(code_root)
+    facts = {
+        "files_count": len(files), "languages": [], "manifests": [], "lockfiles": [],
+        "test_dirs": [], "test_files": [], "ci": [], "docs": [], "dev_files": [],
+        "top_dirs": [], "top_files": [], "node": {}, "python": {"deps": []},
+        "frameworks": [], "test_framework": "", "package_manager": "",
+        "runner": "", "scripts": {},
+    }
+    ext_counts = {}
+    for rel in files:
+        ext = os.path.splitext(rel)[1].lower()
+        for e, lang in EXT_LANGS:
+            if ext == e:
+                ext_counts[lang] = ext_counts.get(lang, 0) + 1
+                break
+    facts["languages"] = sorted(ext_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+
+    names = [_basename(r) for r in files]
+    facts["manifests"] = [r for r in files if _basename(r) in BUILD_FILES][:6]
+    facts["lockfiles"] = [r for r in files if _basename(r) in LOCK_FILES][:6]
+    facts["ci"] = [r for r in files
+                   if r.startswith(".github/workflows/")
+                   or r in (".gitlab-ci.yml", "Jenkinsfile", "azure-pipelines.yml",
+                            ".circleci/config.yml")][:6]
+    facts["docs"] = [r for r in files
+                     if _basename(r) in DOC_BASENAMES
+                     or r.startswith(("docs/", "adr/", "architecture/"))][:8]
+    facts["dev_files"] = [r for r in files if _basename(r) in DEV_FILES][:8]
+
+    for rel in files:
+        m = TEST_DIR_RE.match(rel)
+        if m:
+            facts["test_dirs"].append(m.group(1) + "/")
+        if any(rx.match(_basename(rel)) for rx in TEST_FILE_RES):
+            facts["test_files"].append(rel)
+    facts["test_dirs"] = _dedup(facts["test_dirs"])
+    facts["test_files"] = facts["test_files"][:60]
+
+    for rel in files:
+        if "/" not in rel:
+            facts["top_files"].append(rel)
+        else:
+            d = rel.split("/", 1)[0]
+            cur = next((x for x in facts["top_dirs"] if x[0] == d), None)
+            if cur is None:
+                facts["top_dirs"].append([d, 1])
+            else:
+                cur[1] += 1
+    facts["top_dirs"] = [(d, n) for d, n in sorted(facts["top_dirs"], key=lambda x: (-x[1], x[0]))][:10]
+
+    pkg = _read_json(code_root / "package.json")
+    if pkg:
+        deps = {}
+        for k in ("dependencies", "devDependencies"):
+            if isinstance(pkg.get(k), dict):
+                deps.update(pkg[k])
+        facts["node"] = {
+            "name": str(pkg.get("name") or ""),
+            "scripts": pkg.get("scripts") if isinstance(pkg.get("scripts"), dict) else {},
+            "deps": pkg.get("dependencies") if isinstance(pkg.get("dependencies"), dict) else {},
+            "dev_deps": pkg.get("devDependencies") if isinstance(pkg.get("devDependencies"), dict) else {},
+            "all_deps": deps,
+        }
+        facts["scripts"] = dict(facts["node"]["scripts"])
+        facts["frameworks"] += [v for k, v in NODE_FRAME_MAP.items() if k in deps]
+
+    py_text = "\n".join(_read_text(code_root / n) for n in
+                        ("pyproject.toml", "setup.cfg", "requirements.txt", "setup.py"))
+    py_lower = py_text.lower()
+    py_deps = []
+    m = re.search(r"dependencies\s*=\s*\[(.*?)\]", py_text, re.S)
+    if m:
+        py_deps = re.findall(r"[\"']([A-Za-z0-9_.\-]+)", m.group(1))
+    for line in _read_text(code_root / "requirements.txt").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            py_deps.append(re.split(r"[<>=!~\[]", line)[0].strip())
+    facts["python"]["deps"] = _dedup([d for d in py_deps if d])[:20]
+    facts["frameworks"] += [v for k, v in PY_FRAME_MAP.items() if k in py_lower]
+    facts["frameworks"] = _dedup(facts["frameworks"])
+
+    pom = _read_text(code_root / "pom.xml").lower()
+    if "spring-boot" in pom:
+        facts["frameworks"].append("Spring Boot")
+
+    dev_deps = facts["node"].get("dev_deps", {})
+    if "jest" in dev_deps:
+        facts["test_framework"] = "Jest"
+    elif "vitest" in dev_deps:
+        facts["test_framework"] = "Vitest"
+    elif "mocha" in dev_deps:
+        facts["test_framework"] = "Mocha"
+    elif "pytest" in py_lower:
+        facts["test_framework"] = "pytest"
+    elif "junit" in pom:
+        facts["test_framework"] = "JUnit"
+    elif "go.mod" in [_basename(x) for x in facts["manifests"]]:
+        facts["test_framework"] = "go test"
+
+    locks = [_basename(x) for x in facts["lockfiles"]]
+    pm_map = (("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn"), ("bun.lockb", "bun"),
+              ("bun.lock", "bun"), ("package-lock.json", "npm"), ("poetry.lock", "poetry"),
+              ("uv.lock", "uv"), ("Pipfile.lock", "pipenv"), ("requirements.txt", "pip"),
+              ("composer.lock", "composer"), ("Gemfile.lock", "bundler"))
+    for name, pm in pm_map:
+        if name in locks:
+            facts["package_manager"] = pm
+            break
+
+    dev_names = [_basename(x) for x in facts["dev_files"]]
+    if "Makefile" in dev_names or "makefile" in dev_names or "GNUmakefile" in dev_names:
+        facts["runner"] = "make"
+    elif "justfile" in dev_names:
+        facts["runner"] = "just"
+    elif "Taskfile.yml" in dev_names or "Taskfile.yaml" in dev_names:
+        facts["runner"] = "task"
+    elif facts["scripts"]:
+        facts["runner"] = "{} scripts".format(facts["package_manager"] or "package.json")
+
+    mk = _read_text(code_root / "Makefile")
+    mk_targets = re.findall(r"(?m)^([A-Za-z0-9_.\-]+)\s*:(?!=)", mk)
+    facts["make_targets"] = [t for t in _dedup(mk_targets) if not t.startswith(".")][:10]
+
+    facts.update(_git_facts(code_root))
+    return facts
+
+
+def _lang_label(facts: dict) -> str:
+    if not facts["languages"]:
+        return "未识别主语言"
+    return "、".join("{}（{} 个文件）".format(k, v) for k, v in facts["languages"][:2])
+
+
+def _anchor_candidates(key: str, facts: dict) -> list:
+    if key == "tech-stack":
+        return facts["manifests"][:3]
+    if key == "docs-assets":
+        out = [r for r in facts["docs"] if "/" not in r][:4]
+        if any(r.startswith("docs/") for r in facts["docs"]):
+            out.append("docs/**")
+        return _dedup(out)
+    if key == "quality-system":
+        out = [d + "**" for d in facts["test_dirs"][:3]]
+        return _dedup(out + facts["ci"][:3])
+    if key == "dependencies":
+        return _dedup(facts["lockfiles"][:4] + facts["manifests"][:3])
+    if key == "architecture":
+        mono = [r for r in facts["top_files"]
+                if r in ("pnpm-workspace.yaml", "lerna.json", "go.work",
+                         "settings.gradle", "settings.gradle.kts")]
+        return _dedup(mono + facts["manifests"][:2])
+    if key == "dev-workflow":
+        return _dedup(facts["dev_files"][:4] + facts["ci"][:3])
+    return []
+
+
+def _dim_content(key: str, facts: dict) -> tuple:
+    """返回 (内容 markdown, 一行摘要)；只写事实，不下结论。"""
+    lang = _lang_label(facts)
+    if key == "topology":
+        rows = ["| `{}` | {} | 顶层目录 |".format(d, n) for d, n in facts["top_dirs"]]
+        files = ["- `{}`".format(r) for r in facts["top_files"][:12]]
+        content = "\n".join([
+            "### 目录概览（自动推导）", "",
+            "| 目录 | 文件数 | 说明 |", "|------|------|------|",
+            "\n".join(rows) if rows else "| - | 0 | 未检测到子目录 |", "",
+            "### 顶层关键文件", "",
+            "\n".join(files) if files else "- 未检测到顶层文件",
+        ])
+        summary = "{}；顶层 {} 个目录 / 共 {} 个文件".format(
+            lang, len(facts["top_dirs"]), facts["files_count"])
+        return content, summary
+
+    if key == "tech-stack":
+        rows = [
+            ("主语言", lang),
+            ("构建/清单", "、".join("`{}`".format(r) for r in facts["manifests"][:3]) or "未检测到"),
+            ("包管理器", facts["package_manager"] or "未检测到锁文件"),
+            ("框架/库", "、".join(facts["frameworks"][:6]) or "未识别"),
+            ("测试框架", facts["test_framework"] or "未识别"),
+        ]
+        content = "\n".join([
+            "### 技术栈快照（自动推导）", "",
+            "| 项 | 值 |", "|------|------|",
+            "\n".join("| {} | {} |".format(k, v.replace("|", "/")) for k, v in rows),
+        ])
+        summary = "{}；{}；{}".format(
+            lang, facts["package_manager"] or "无锁文件", "、".join(facts["frameworks"][:3]) or "未识别框架")
+        return content, summary
+
+    if key == "docs-assets":
+        rows = ["| `{}` | 文档/说明 |".format(r) for r in facts["docs"]]
+        content = "\n".join([
+            "### 文档清单（自动推导）", "",
+            "| 文件 | 类型 |", "|------|------|",
+            "\n".join(rows) if rows else "| - | 未检测到 README / docs |",
+        ])
+        summary = "{} 份文档{}".format(len(facts["docs"]), "（{}）".format(facts["docs"][0]) if facts["docs"] else "")
+        return content, summary
+
+    if key == "quality-system":
+        rows = [
+            ("测试目录", "、".join("`{}`".format(d) for d in facts["test_dirs"][:4]) or "未检测到"),
+            ("测试文件", "{} 个{}".format(len(facts["test_files"]),
+                                       "（{}）".format(facts["test_files"][0]) if facts["test_files"] else "")),
+            ("测试框架", facts["test_framework"] or "未识别"),
+            ("CI", "、".join("`{}`".format(c) for c in facts["ci"][:3]) or "未检测到"),
+        ]
+        content = "\n".join([
+            "### 质量体系快照（自动推导）", "",
+            "| 项 | 值 |", "|------|------|",
+            "\n".join("| {} | {} |".format(k, v.replace("|", "/")) for k, v in rows),
+        ])
+        summary = "{} 个测试文件；CI {}".format(
+            len(facts["test_files"]), "、".join(facts["ci"][:2]) if facts["ci"] else "未检测到")
+        return content, summary
+
+    if key == "dependencies":
+        runtime = len(facts["node"].get("deps", {}))
+        dev = len(facts["node"].get("dev_deps", {}))
+        py_n = len(facts["python"]["deps"])
+        rows = [
+            ("清单/锁文件", "、".join("`{}`".format(r) for r in
+                                  _dedup(facts["lockfiles"][:4] + facts["manifests"][:3])) or "未检测到"),
+            ("Node 依赖", "runtime {} / dev {}".format(runtime, dev) if facts["node"] else "不适用"),
+            ("Python 依赖", "{} 个{}".format(py_n, "（{}）".format("、".join(facts["python"]["deps"][:3]))
+                                          if py_n else "") if py_n or facts["python"]["deps"] else "不适用"),
+            ("第三方运行时依赖", "见上清单" if (runtime or py_n) else "未发现（可能为零依赖项目）"),
+        ]
+        content = "\n".join([
+            "### 依赖与供应链快照（自动推导）", "",
+            "| 项 | 值 |", "|------|------|",
+            "\n".join("| {} | {} |".format(k, v.replace("|", "/")) for k, v in rows),
+        ])
+        summary = "{} 个锁文件；第三方运行时依赖 {}".format(
+            len(facts["lockfiles"]), runtime + py_n)
+        return content, summary
+
+    if key == "dev-workflow":
+        cmds = []
+        for name in list(facts["scripts"])[:6]:
+            cmds.append("{}{} {}".format(
+                facts["package_manager"] or "npm", " run", name) if name not in ("start", "test") else
+                "{} {}".format(facts["package_manager"] or "npm", name))
+        for t in facts["make_targets"][:6]:
+            cmds.append("make {}".format(t))
+        rows = [
+            ("任务运行器", facts["runner"] or "未检测到"),
+            ("脚本", "、".join("`{}` → `{}`".format(k, v)
+                             for k, v in list(facts["scripts"].items())[:6]) or "未检测到"),
+            ("常用命令", "、".join("`{}`".format(c) for c in cmds[:8]) or "未检测到"),
+            ("环境文件", "、".join("`{}`".format(r) for r in facts["dev_files"][:5]) or "未检测到"),
+            ("分支", facts["branch"] or "未检测到（非 git 仓库或无 HEAD）"),
+        ]
+        content = "\n".join([
+            "### 工作流与环境快照（自动推导）", "",
+            "| 项 | 值 |", "|------|------|",
+            "\n".join("| {} | {} |".format(k, v.replace("|", "/")) for k, v in rows),
+            "",
+            "> 环境事实（本机路径、凭据、登录态）不在此维度自动写入，请人工按需补充。",
+        ])
+        summary = "运行器 {}；命令 {}；分支 {}".format(
+            facts["runner"] or "未检测到", "、".join(cmds[:3]) or "未检测到", facts["branch"] or "-")
+        return content, summary
+
+    return "", ""
+
+
+def _section_bounds(text: str):
+    start = text.find("## 维度内容")
+    if start < 0:
+        return None
+    start = text.find("\n", start)
+    if start < 0:
+        return None
+    start += 1
+    end = text.find("## 相关维度", start)
+    if end < 0:
+        end = len(text)
+    return start, end
+
+
+def _has_manual_body(body: str) -> bool:
+    cleaned = re.sub(r"(?s)<!--.*?-->", "", body)
+    cleaned = cleaned.replace("{{dimensionContent}}", "")
+    if AUTO_MARK in cleaned:
+        return False
+    return bool(cleaned.strip())
+
+
+def _fill_dimension(dim_path: Path, content: str, summary: str, force: bool,
+                    dry_run: bool = False) -> str:
+    """把自动推导内容写进维度文件；返回 written / skipped / nofile。"""
+    if not dim_path.is_file():
+        return "nofile"
+    text = dim_path.read_text(encoding="utf-8")
+    bounds = _section_bounds(text)
+    if bounds is None:
+        return "skipped"
+    start, end = bounds
+    body = text[start:end]
+    if _has_manual_body(body) and not force:
+        return "skipped"
+    if dry_run:
+        return "written"
+
+    new_body = "\n\n<!-- AGENT: 以下为 sop.py scan 自动推导的事实清单（非结论）；架构/取舍/教训等语义判断请人工补充。 -->\n\n{}\n\n".format(content.strip())
+    text = text[:start] + new_body + text[end:]
+
+    if re.search(r"(?m)^>\s*\*\*摘要\*\*:", text):
+        text = re.sub(r"(?m)^(>\s*\*\*摘要\*\*:\s*).*$",
+                      lambda m: m.group(1) + summary, text, count=1)
+    text = re.sub(r"置信度\s*[^|]*\|", "置信度 中（{}，待复核） |".format(AUTO_MARK), text, count=1)
+    text = re.sub(r"技能 v\d+(?:\.\d+)*", "技能 v{}".format(DIM_TEMPLATE_VERSION), text, count=1)
+    write_text_lf(dim_path, text)
+    return "written"
+
+
+def _fill_identity(agents_path: Path, facts: dict, dry_run: bool) -> list:
+    """只替换仍为「待分析」的身份表格子，不碰人工已填的值。"""
+    if not agents_path.is_file():
+        return []
+    text = agents_path.read_text(encoding="utf-8")
+    lang = facts["languages"][0] if facts["languages"] else None
+    values = {
+        "主语言": "{}（{} 个文件）".format(lang[0], lang[1]) if lang else "",
+        "包管理器": facts["package_manager"] or "",
+        "分支模型": facts["branch"] or "",
+        "任务运行器": facts["runner"] or "",
+    }
+    changed = []
+    for label, val in values.items():
+        if not val:
+            continue
+        pat = re.compile(r"(?m)^(\|\s*" + label + r"\s*\|\s*)待分析(\s*\|)$")
+        new, n = pat.subn(lambda m: m.group(1) + val.replace("|", "/") + m.group(2), text, count=1)
+        if n:
+            text = new
+            changed.append("{} → {}".format(label, val))
+    if changed and not dry_run:
+        write_text_lf(agents_path, text)
+    return changed
+
+
+def cmd_scan(args) -> int:
+    root = Path(args.root).resolve()
+    mf = load_manifest(root)
+    if mf is None:
+        print("! ai/{} 缺失，请先运行 `python sop.py init`".format(MANIFEST_NAME))
+        return 1
+    code_root = Path(mf.get("codeRoot", root))
+    if not code_root.is_absolute():
+        code_root = (Path.cwd() / code_root).resolve()
+    facts = detect_facts(code_root)
+    dry = bool(getattr(args, "dry_run", False))
+    force = bool(getattr(args, "force", False))
+
+    only = (getattr(args, "only", None) or "").replace(",", " ").split()
+    target_keys = None
+    if only:
+        target_keys = set()
+        for dim in mf["dimensions"]:
+            if str(dim.get("id")) in only or dim.get("key") in only:
+                target_keys.add(dim.get("key"))
+        if not target_keys:
+            print("! --only 未匹配任何维度: {}".format(" ".join(only)))
+            return 1
+
+    print("扫描 {}（codeRoot={}）".format(root, code_root))
+    if not facts["files_count"]:
+        print("! 未检测到可识别文件：维度将写入占位说明，锚点改为手动维护")
+    print("  {}".format(_lang_label(facts)))
+    print("  清单: {}".format("、".join(facts["manifests"][:4]) or "无"))
+    print("  测试: {} 个目录 / {} 个文件；CI: {}".format(
+        len(facts["test_dirs"]), len(facts["test_files"]),
+        "、".join(facts["ci"][:2]) or "无"))
+
+    written, skipped, repaired = [], [], []
+    for dim in mf["dimensions"]:
+        key = dim.get("key")
+        dim_path = dim_file_path(root, dim)
+        if key in SCAN_KEYS and (target_keys is None or key in target_keys):
+            content, summary = _dim_content(key, facts)
+            if not facts["files_count"] and key != "topology":
+                content, summary = "未检测到可识别文件（自动推导）。请人工补充本维度。", "未检测到可识别文件"
+            if dim_path.is_file() and content:
+                status = _fill_dimension(dim_path, content, summary, force, dry_run=dry)
+                if status == "written":
+                    written.append("{} {}".format(dim["id"], key))
+                    print("{} dim {} {}: {}（{}）".format(
+                        "预览" if dry else "+", dim["id"], key,
+                        "将写入自动推导内容" if dry else "写入自动推导内容", summary))
+                elif status == "skipped":
+                    skipped.append("{} {}".format(dim["id"], key))
+                    print("~ dim {} {}: 已有手工内容，跳过（--force 可覆盖）".format(dim["id"], key))
+                else:
+                    print("- dim {} {}: 文件缺失，跳过".format(dim["id"], key))
+
+        anchors = dim.get("anchors") or []
+        if not anchors or anchors == ["@tree"]:
+            continue
+        if target_keys is not None and key not in target_keys:
+            continue
+        if sum(len(glob_hits(code_root, p)) for p in anchors) > 0:
+            continue
+        candidates = _anchor_candidates(key, facts)
+        dim["anchors"] = candidates
+        repaired.append("dim {} {}: {} → {}".format(
+            dim["id"], key, "、".join(anchors), "、".join(candidates) or "[]（改为手动维护）"))
+        print("- 锚点修复 dim {} {}: {} → {}".format(
+            dim["id"], key, "、".join(anchors), "、".join(candidates) or "[]（改为手动维护）"))
+
+    identity = _fill_identity(root / "ai" / "AGENTS.md", facts, dry)
+    for line in identity:
+        print("+ 身份表: {}".format(line))
+
+    if repaired and not dry:
+        mf.setdefault("_index", {})
+        mf["_index"]["lastIncrementalRefresh"] = mf["_index"].get("lastIncrementalRefresh", "-")
+        save_manifest(root, mf)
+        print("+ 已写回 manifest 锚点（{} 处）".format(len(repaired)))
+
+    if dry:
+        print("\n预览模式（--dry-run）：未写入任何文件")
+    review = [d.get("key") for d in mf["dimensions"] if d.get("key") not in SCAN_KEYS]
+    print("\n自动填充 {} 个维度，跳过 {} 个；建议人工补充: {}".format(
+        len(written), len(skipped), "、".join(review)))
+    if not dry:
+        print("下一步：`python sop.py refresh --mark-fresh`（封存锚点 + 重写 AGENTS.md 生成区）")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -2003,7 +2539,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.7.5（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.8.2（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")
@@ -2017,6 +2553,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="封存锚点 + 递增版本 + 重写 AGENTS.md 生成区")
     pr.add_argument("--only", default="",
                     help="仅封存指定维度（id 或 key，逗号/空格分隔，如 --only 12,13）；缺省封存全部")
+
+    ps = sub.add_parser("scan", help="自动推导维度初稿（init 后运行；只写事实、不做架构判断）")
+    ps.add_argument("--root", default=".")
+    ps.add_argument("--dry-run", action="store_true", help="只打印将写入的内容，不落盘")
+    ps.add_argument("--force", action="store_true", help="覆盖维度文件里已有的人工内容")
+    ps.add_argument("--only", default="",
+                    help="只处理指定维度（id 或 key，逗号/空格分隔，如 --only 2,5）")
 
     pe = sub.add_parser("entry", help="生成/校验仓库入口文件（入口 + 纪律指向 + 任务路由，不复制维度正文）")
     pe.add_argument("--root", default=".")
@@ -2113,7 +2656,7 @@ def main(argv=None) -> int:
         "record": cmd_record, "render": cmd_render, "check": cmd_check,
         "lessons": cmd_lessons, "tokens": cmd_tokens, "dims": cmd_dims,
         "audit": cmd_audit, "migrate": cmd_migrate, "entry": cmd_entry,
-        "tasks": cmd_tasks,
+        "tasks": cmd_tasks, "scan": cmd_scan,
     }
     return handlers[args.cmd](args)
 

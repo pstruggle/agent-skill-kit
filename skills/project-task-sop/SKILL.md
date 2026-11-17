@@ -1,15 +1,18 @@
 ---
 name: project-task-sop
-description: 轻量项目任务执行规程：启动前边界对齐、规模决策门（light/standard/full）、模块化上下文索引（manifest 驱动）、任务台账（plan.md 字段聚合 + 存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重记录、教训检索、决策点审计笔记、维度归属判定表；sop.py 提供 init/refresh/entry/tasks/dedup/record/render/check/lessons/tokens/dims/audit/migrate
+description: 多会话、多 Agent 的项目里维护上下文与任务台账，让下一个会话不用重新摸清仓库。触发语："接着上次做"、"上次做到哪了"、"这个仓库之前怎么改的"、"别重复踩坑"、"上下文过期了吗"、"任务排一下，接下来做哪个"、"开工前先对齐边界"。命令：init/scan/refresh/entry/tasks/dedup/record/render/check/lessons/tokens/dims/audit/migrate
 whenToUse:
-  - 开始新的项目任务前
-  - 需要避免重复已知失败的尝试时
-  - 接手陌生代码库需要快速建立上下文时
-  - 跨会话长期项目需要共享上下文时
+  - 用户说"接着上次做"、"上次做到哪了"、"继续这个项目"
+  - 用户问"这个仓库之前怎么改的"、"为什么这里这么设计"
+  - 用户说"别重复踩坑"、"以前踩过什么坑"、"教训查一下"
+  - 用户问"上下文过期了吗"、"维度要不要更新"、"check 跑一下"
+  - 用户说"任务排一下"、"接下来做哪个"、"这个任务到哪一步了"
+  - 开工前需要先对齐边界、写 plan.md / NOTES 时
+  - 接手陌生代码库、跨会话长期项目需要共享上下文时
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.7.5 — 轻量任务执行规程
+# Project Task SOP v4.8.2 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -79,7 +82,7 @@ ai/
 
 1. `read("ai/AGENTS.md")` — 索引（生成区为当前维度体系快照）。
 2. 按任务类型只读所需维度（索引内映射表由 manifest 聚合：feature→1,2,7,9,10；bugfix→1,2,3,7,9；…）；**维度 9（项目级教训）所有任务必读**——开跑前先扫一遍是否命中已知坑。
-3. 无 `ai/` 或 `ai/context.manifest.json` 缺失 → 在本 skill 根目录执行 `python sop.py init`（写入内置 9 维度建议集 manifest），然后按 manifest 填充维度文件。
+3. 无 `ai/` 或 `ai/context.manifest.json` 缺失 → 在本 skill 根目录执行 `python sop.py init`（写入内置 9 维度建议集 manifest），随后 `python sop.py scan`：按 codeRoot 实际文件自动填充维度 1/2/4/5/6/8 的事实初稿（标 `自动推导，待复核`），并把 0 命中的锚点改为真实文件或置空；再人工补维度 3/7/9 等语义判断，`refresh --mark-fresh` 封存。
 4. 检测到相关文件变更 → `python sop.py refresh` 查看过期维度，重分析后 `--mark-fresh` 封存（同时重写 AGENTS.md 生成区）；只复核了部分维度时用 `--mark-fresh --only 12,13`，避免把没复核的维度一起封存成"最新"。
 5. 新增/调整维度：直接编辑 `ai/context.manifest.json`（增删 dimensions 条目 + 同步 `attribution` 归属表 + 建/删对应 `context/NN-key.md`），再 `python sop.py check --context` 校验、`refresh --mark-fresh` 封存。**无需改 sop.py 代码。**
 6. 需要仓库入口文件（`AGENTS.md` / 类似物）时，**先定落点，再生成——落点不许默认**：
@@ -142,6 +145,7 @@ ai/
 | 命令 | 作用 |
 |------|------|
 | `python sop.py init [--root .]` | 初始化 ai/ 结构：manifest 缺失时写入内置 9 维度建议集 + 生成维度骨架 + AGENTS.md |
+| `python sop.py scan [--dry-run] [--force] [--only 2,5]` | init 后自动推导：按 codeRoot 实际文件填充维度 1/2/4/5/6/8 的事实清单（标"自动推导，待复核"）+ 修复 0 命中锚点 + 填身份表；只写事实不做架构判断，已有手工内容默认跳过（`--force` 覆盖） |
 | `python sop.py refresh [--mark-fresh] [--only 12,13]` | 按 manifest 锚点检测过期维度；`--mark-fresh` 封存锚点 + 版本递增 + 重写 AGENTS.md 生成区；`--only` 只封存指定维度（id 或 key，逗号/空格分隔），其余维度保持旧锚点 |
 | `python sop.py check --context [--root .]` | 校验 manifest 结构 / manifest↔context 一致性 / 锚点命中率；启用 `entry` 时顺带做入口文件 lint（告警不阻塞） |
 | `python sop.py entry [--check] [--force] [--out 路径]` | 按 manifest `entry` + 各维度 `entryHint` 生成/刷新仓库入口文件（生成区=纪律索引+任务路由+维护契约；手写区不动）；`--check` 校验行数/权威声明/凭据/时效状态/生成区是否同步 |
@@ -205,5 +209,8 @@ ai/
 | 4.7.3 | 2026-11-16 | **文档与元数据同步**：frontmatter `description` 补齐 `entry/tasks/migrate` 与两个新增能力关键词（原描述缺入口与台账，技能目录匹配不到）；`sop.py` docstring 命令清单补 `entry`/`tasks`、版本号 4.0 → 4.7.3（`--help` 与 docstring 口径一致）；README 补 42 用例数、`LICENSE`、`reference/`/`templates/` 数量、`tasks --backfill --dry-run` 提示、`ai/` 与 `.experiments.jsonl` 被 gitignore 的说明（入口为何不能放仓内的原因链）|
 | 4.7.4 | 2026-11-17 | **CI 与版本同步守卫**：新增 `.github/workflows/test.yml`（ubuntu/windows × Python 3.9/3.13，跑 stdlib 回归 + `sop.py --help` 烟测；`check --context`/`entry`/`tasks` 四道门依赖 `ai/`，不进 CI）；新增 `tests/test_version_sync.py` 把版本漂移变成红灯——五处版本号（SKILL 标题 / 历史表末行 / README 技能表 / docstring / `--help`）必须相同、历史表必须升序无重复、frontmatter `description` 必须列出全部子命令；docstring 兼容性声明由 Python 3.8+ 修正为 3.9+ |
 | 4.7.5 | 2026-11-17 | **Python 3.9 兼容修复 + CI 矩阵修正**（CI 首跑即抓到）：`Path.write_text(newline=)` 是 3.10+ 签名，3.9 上 TypeError 导致台账/计划/入口文件全部写不出 → 统一改走新增的 `write_text_lf()`（显式 `open(..., newline="\n")`，同时保证跨平台只落 LF）；CI 的 3.9 格由 `ubuntu-latest` 改钉 `ubuntu-22.04`（26.04 已无 3.9 构建）；新增守卫用例 `test_no_py310_only_pathlib_write_kwargs`（vermin 查不出关键字参数，只能文本守卫） |
+| 4.8.0 | 2026-11-17 | **init 后自动推导（scan）**：新增 `sop.py scan [--dry-run] [--force] [--only]`——按 codeRoot 实际文件（语言/构建清单/锁文件/测试/CI/文档/工作流/顶层目录/git 分支）填充维度 1/2/4/5/6/8 的事实清单，标「自动推导，待复核」，架构/教训等语义判断仍归人工；仅当某维度锚点当前 0 命中时改 manifest `anchors`（改为真实文件或置空=改为手动维护），修掉「init 后在真实项目上 `check --context` 必然因锚点失效而失败」；默认不覆盖已有手工正文（`--force` 才覆盖），二次运行幂等；`ai/AGENTS.md` 身份表只替换「待分析」格；新增 `tests/test_scan.py`（10 例，先红后绿） |
+| 4.8.1 | 2026-11-17 | **触发面（P0-1）**：frontmatter `description` 由「功能清单」改为「场景 + 口语触发语」（接着上次做 / 这个仓库之前怎么改的 / 别重复踩坑 / 上下文过期了吗 / 任务排一下…），命令枚举压缩为末尾一行、仍覆盖全部子命令；`whenToUse` 4 条抽象场景改写为 7 条用户原话；新增两条守卫（触发语 ≥4 条且 description ≤800 字符、whenToUse ≥3 条口语），防止下次改描述又退回能力罗列 |
+| 4.8.2 | 2026-11-17 | **分发面（P0-3 其一）**：两个安装器新增 `cursor`（`~/.cursor/skills` / `<project>/.cursor/skills`）、`gemini`（`~/.gemini/skills` / `<project>/.gemini/skills`）、`copilot`（个人 `~/.copilot/skills`；项目级 `<project>/.github/skills`，不是 `.copilot`）；`all` 由 5 类扩到 7 类；`install.sh` 的 usage 改为取到首个空行，避免后续加行把帮助截断；新增 `tests/test_install_targets.py`（两安装器目标集合一致 + 三家用户级/项目级路径，2 例按平台跳过） |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

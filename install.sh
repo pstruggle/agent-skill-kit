@@ -8,6 +8,12 @@
 #   claude  project: <project>/.claude/skills
 #   agents  user:    ~/.agents/skills
 #   agents  project: <project>/.agents/skills
+#   cursor  user:    ~/.cursor/skills
+#   cursor  project: <project>/.cursor/skills
+#   gemini  user:    ~/.gemini/skills
+#   gemini  project: <project>/.gemini/skills
+#   copilot user:    ~/.copilot/skills              (个人 skills 目录)
+#   copilot project: <project>/.github/skills       (项目级是 .github，不是 .copilot)
 #
 # Codex discovers skills from CODEX_HOME only, so --scope project still installs
 # into $CODEX_HOME/skills. Use --dest to also install into a custom directory.
@@ -33,7 +39,7 @@ uninstall=0
 list=0
 
 usage() {
-    sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -71,6 +77,9 @@ root_for() {
         agents) if [ "$scope" = project ]; then printf '%s' "$project_root/.agents/skills"; else printf '%s' "$HOME/.agents/skills"; fi ;;
         claude) if [ "$scope" = project ]; then printf '%s' "$project_root/.claude/skills"; else printf '%s' "$HOME/.claude/skills"; fi ;;
         codex)  printf '%s' "$codex_home/skills" ;;
+        cursor) if [ "$scope" = project ]; then printf '%s' "$project_root/.cursor/skills"; else printf '%s' "$HOME/.cursor/skills"; fi ;;
+        gemini) if [ "$scope" = project ]; then printf '%s' "$project_root/.gemini/skills"; else printf '%s' "$HOME/.gemini/skills"; fi ;;
+        copilot) if [ "$scope" = project ]; then printf '%s' "$project_root/.github/skills"; else printf '%s' "$HOME/.copilot/skills"; fi ;;
         *)      echo "Unknown target: $1" >&2; exit 1 ;;
     esac
 }
@@ -99,7 +108,7 @@ selected_skills() {
 }
 
 if [ "$targets" = all ]; then
-    target_list='dsh codex claude agents'
+    target_list='dsh codex claude agents cursor gemini copilot'
 else
     target_list=$(printf '%s' "$targets" | tr ',' ' ')
 fi

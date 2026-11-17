@@ -5,7 +5,8 @@
 
 .DESCRIPTION
     Copies (or links) every skill under ./skills into the skill directory used by
-    DSH, Codex, Claude Code, or the shared .agents convention.
+    DSH, Codex, Claude Code, Cursor, Gemini CLI, GitHub Copilot, or the shared
+    .agents convention.
 
     Targets and destinations:
       dsh     user:    $DSH_HOME/skills               (default ~/.dsh/skills)
@@ -15,6 +16,12 @@
       claude  project: <project>/.claude/skills
       agents  user:    ~/.agents/skills
       agents  project: <project>/.agents/skills
+      cursor  user:    ~/.cursor/skills
+      cursor  project: <project>/.cursor/skills
+      gemini  user:    ~/.gemini/skills
+      gemini  project: <project>/.gemini/skills
+      copilot user:    ~/.copilot/skills              (个人 skills 目录)
+      copilot project: <project>/.github/skills       (注意：项目级是 .github，不是 .copilot)
 
     Codex discovers skills from CODEX_HOME only, so -Scope project still installs
     into $CODEX_HOME/skills. Pass -Dest to also install into a custom directory.
@@ -37,7 +44,7 @@
 [CmdletBinding()]
 param(
     # Agent skill directories to install into. 'all' covers every built-in target.
-    [ValidateSet('dsh', 'codex', 'claude', 'agents', 'custom', 'all')]
+    [ValidateSet('dsh', 'codex', 'claude', 'agents', 'cursor', 'gemini', 'copilot', 'custom', 'all')]
     [string[]]$Target = @('all'),
 
     # 'user' writes to the tool's home directory, 'project' writes under -ProjectRoot.
@@ -111,12 +118,18 @@ if ($Scope -eq 'project') {
     $roots['dsh'] = Join-Parts $ProjectRoot @('.dsh', 'skills')
     $roots['agents'] = Join-Parts $ProjectRoot @('.agents', 'skills')
     $roots['claude'] = Join-Parts $ProjectRoot @('.claude', 'skills')
+    $roots['cursor'] = Join-Parts $ProjectRoot @('.cursor', 'skills')
+    $roots['gemini'] = Join-Parts $ProjectRoot @('.gemini', 'skills')
+    $roots['copilot'] = Join-Parts $ProjectRoot @('.github', 'skills')
     $roots['codex'] = Join-Parts $codexHome @('skills')
 }
 else {
     $roots['dsh'] = Join-Parts $dshHome @('skills')
     $roots['agents'] = Join-Parts $HOME @('.agents', 'skills')
     $roots['claude'] = Join-Parts $HOME @('.claude', 'skills')
+    $roots['cursor'] = Join-Parts $HOME @('.cursor', 'skills')
+    $roots['gemini'] = Join-Parts $HOME @('.gemini', 'skills')
+    $roots['copilot'] = Join-Parts $HOME @('.copilot', 'skills')
     $roots['codex'] = Join-Parts $codexHome @('skills')
 }
 if ($Dest) { $roots['custom'] = $Dest }

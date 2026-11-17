@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/pstruggle/agent-skill-kit/actions/workflows/test.yml/badge.svg)](https://github.com/pstruggle/agent-skill-kit/actions/workflows/test.yml)
 
-跨 Agent 复用的技能包：**技能源文件统一放在 `skills/`，由安装脚本投递到各个 Agent 的技能目录**。一份技能同时可用于 DSH、Codex、Claude Code，以及遵循 `.agents` 约定的其他工具。
+跨 Agent 复用的技能包：**技能源文件统一放在 `skills/`，由安装脚本投递到各个 Agent 的技能目录**。一份技能同时可用于 DSH、Codex、Claude Code、Cursor、Gemini CLI、GitHub Copilot，以及遵循 `.agents` 约定的其他工具。
 
 > A small, agent-agnostic skill kit. One source of truth under `skills/`, one installer that copies or links each skill into the directory your agent already reads.
 
@@ -13,7 +13,11 @@ agent-skill-kit/
 ├─ install.ps1           # Windows / PowerShell 安装器
 ├─ install.sh            # macOS / Linux 安装器
 ├─ tests/
-│  └─ test_sop.py        # sop.py 命令行回归测试（46 用例，标准库 unittest，无第三方依赖）
+│  ├─ test_sop.py        # sop.py 命令行回归（42 例）
+│  ├─ test_scan.py       # init 后自动推导 scan 的行为契约（10 例）
+│  └─ test_version_sync.py # 五处版本号 + frontmatter 子命令清单 + 触发面守卫（6 例）
+│  └─ test_install_targets.py # ps1/sh 目标一致 + 三家新目标路径（5 例，2 例按平台跳过）
+│                        # 合计 63 例，标准库 unittest，无第三方依赖
 ├─ skills/               # 唯一事实源：每个技能一个目录
 │  └─ project-task-sop/
 │     ├─ SKILL.md
@@ -32,17 +36,19 @@ agent-skill-kit/
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记 | 4.7.5 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记 | 4.8.2 |
 
 ## 回归测试
 
 ```sh
-python -m unittest discover -s tests -v      # 46 用例，约 24 s，全部在临时目录里跑
+python -m unittest discover -s tests -v      # 63 用例，约 31 s，全部在临时目录里跑（2 例按平台跳过）
 ```
 
 `sop.py` 是纯标准库实现的单文件 CLI，改完至少跑一遍：
 
 ```sh
+python skills/project-task-sop/sop.py init --root <项目根>
+python skills/project-task-sop/sop.py scan --root <项目根>          # 自动填充维度 1/2/4/5/6/8 的事实初稿
 python skills/project-task-sop/sop.py check --context --root <项目根>
 python skills/project-task-sop/sop.py refresh --mark-fresh --root <项目根>
 python skills/project-task-sop/sop.py audit --root <项目根>
@@ -92,16 +98,22 @@ cd agent-skill-kit
 | `claude` | project | `<project>/.claude/skills` |
 | `agents` | user | `~/.agents/skills` |
 | `agents` | project | `<project>/.agents/skills` |
+| `cursor` | user | `~/.cursor/skills` |
+| `cursor` | project | `<project>/.cursor/skills` |
+| `gemini` | user | `~/.gemini/skills` |
+| `gemini` | project | `<project>/.gemini/skills` |
+| `copilot` | user | `~/.copilot/skills`（个人 skills 目录） |
+| `copilot` | project | `<project>/.github/skills`（项目级是 `.github`，不是 `.copilot`） |
 | `custom` | — | `-Dest` / `--dest` 指定的任意目录 |
 
-Codex 只从 `CODEX_HOME` 发现技能，所以 `-Scope project` 对 `codex` 仍写入 `$CODEX_HOME/skills`；`-ProjectRoot` 只影响 DSH / Claude / agents 的项目级目录。
+Codex 只从 `CODEX_HOME` 发现技能，所以 `-Scope project` 对 `codex` 仍写入 `$CODEX_HOME/skills`；`-ProjectRoot` 影响 DSH / Claude / agents / Cursor / Gemini / Copilot 的项目级目录（Copilot 落 `.github/skills`）。
 
 ## 参数
 
 | PowerShell | shell | 说明 |
 |------------|-------|------|
 | `-List` | `--list` | 列出技能与将要写入的目录，不落盘 |
-| `-Target` | `--target` | `dsh`、`codex`、`claude`、`agents`、`all`，可逗号分隔多选 |
+| `-Target` | `--target` | `dsh`、`codex`、`claude`、`agents`、`cursor`、`gemini`、`copilot`、`all`，可逗号分隔多选 |
 | `-Scope` | `--scope` | `user`（默认）或 `project` |
 | `-Skill` | `--skill` | 只装指定技能，逗号分隔；缺省为全部 |
 | `-Mode` | `--mode` | `copy`（默认，复制文件）或 `link`（Windows 用 junction，Unix 用符号链接，跟随 `skills/` 的改动） |
@@ -122,6 +134,9 @@ pwsh ./install.ps1 -Target dsh -Scope project -ProjectRoot C:\work\my-app
 
 # 用链接方式装到 Codex / Claude，改 skill 源文件即时生效
 pwsh ./install.ps1 -Target codex,claude -Mode link
+
+# 装到 Cursor / Gemini CLI / Copilot（用户级）
+pwsh ./install.ps1 -Target cursor,gemini,copilot
 
 # 升级已装的技能
 git pull
@@ -175,7 +190,7 @@ cd agent-skill-kit
 
 Run `--list` to see the skills and destinations, `--mode link` to symlink instead of copy, `--uninstall` to remove, `--help` for the full flag list.
 
-Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/test_sop.py` (stdlib `unittest`, 46 cases).
+Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / scan / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/` (stdlib `unittest`, 63 cases, no third-party deps).
 
 ## 许可证
 
