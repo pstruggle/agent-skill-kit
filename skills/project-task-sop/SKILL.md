@@ -1,6 +1,6 @@
 ---
 name: project-task-sop
-description: 多会话、多 Agent 的项目里维护上下文与任务台账，让下一个会话不用重新摸清仓库。触发语："接着上次做"、"上次做到哪了"、"这个仓库之前怎么改的"、"别重复踩坑"、"上下文过期了吗"、"任务排一下，接下来做哪个"、"开工前先对齐边界"、"收工前把门跑一遍"。命令：init/scan/refresh/entry/tasks/dedup/record/render/check/lessons/tokens/dims/audit/gates/migrate
+description: 多会话、多 Agent 的项目里维护上下文与任务台账，让下一个会话不用重新摸清仓库。触发语："接着上次做"、"上次做到哪了"、"这个仓库之前怎么改的"、"别重复踩坑"、"上下文过期了吗"、"任务排一下，接下来做哪个"、"开工前先对齐边界"、"收工前把门跑一遍"。命令：init/scan/refresh/entry/tasks/next/dedup/record/render/check/lessons/tokens/dims/audit/gates/migrate
 whenToUse:
   - 用户说"接着上次做"、"上次做到哪了"、"继续这个项目"
   - 用户问"这个仓库之前怎么改的"、"为什么这里这么设计"
@@ -12,7 +12,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.9.0 — 轻量任务执行规程
+# Project Task SOP v4.10.0 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -25,6 +25,7 @@ disable-model-invocation: false
 ## 0. 启动门 — 先判断是否适用，再对齐关键边界，最后决定流程
 
 - 任务 <5 分钟、纯问答、或无多会话价值 → **不适用本 skill，直接干活，不写任何文书。**
+- 接手已有台账的项目：先 `python sop.py next`（现在能做什么、被谁挡着、后面几波），再对齐本次任务边界。`next` 只算 `depends` 约束，**不做优先级判断**——"先做哪个"仍由人/agent 按业务判断。
 
 ### 0.1 边界对齐门（适用本 skill 的任务）
 
@@ -150,6 +151,7 @@ ai/
 | `python sop.py check --context [--root .]` | 校验 manifest 结构 / manifest↔context 一致性 / 锚点命中率；启用 `entry` 时顺带做入口文件 lint（告警不阻塞） |
 | `python sop.py entry [--check] [--force] [--out 路径]` | 按 manifest `entry` + 各维度 `entryHint` 生成/刷新仓库入口文件（生成区=纪律索引+任务路由+维护契约；手写区不动）；`--check` 校验行数/权威声明/凭据/时效状态/生成区是否同步 |
 | `python sop.py tasks [--check] [--backfill [--dry-run] [--status S] [--no-suggest]] [--out 路径]` | 任务台账：扫 `ai/*/plan.md` 字段表（status/parent/depends/relates/supersedes/updated）聚合为 `ai/TASKS.md`；`--check` 校验状态枚举/id 唯一/引用存在/成环 + 台账是否与 plan.md 同步；`--backfill` 存量接入：给缺台账字段的老 plan.md 补行（**先 `--dry-run` 预览**，缺省 `pending` 并列入「需人工确认」，NOTES 有验收记录才推断 `done`，只打印关系建议不写入） |
+| `python sop.py next [--json]` | **可执行前沿**：按 `status` + `depends` 算第 1 波（现在可做）/ 后续波次 / 阻塞原因（等谁、它是什么状态）/ 无法排序（引用缺失或成环）；`dropped` 前置不阻塞后继并在行内标注「前置已放弃」；**不排优先级、不推工期**（那是语义判断） |
 | `python sop.py dedup <task> -m <method> -p '<json>'` | 实验查重（`-p` 也可用 `-p k=v` 重复多次，规避 shell 引号问题） |
 | `python sop.py record <task> -m <method> -p '<json>' -r <result>` | 追加实验记录（同上） |
 | `python sop.py render <task> [--out f.md]` | 从 JSONL 渲染人读报告 |
@@ -242,5 +244,6 @@ python path/to/skills/project-task-sop/sop.py gates --root "$(git rev-parse --sh
 | 4.8.2 | 2026-11-17 | **分发面（P0-3 其一）**：两个安装器新增 `cursor`（`~/.cursor/skills` / `<project>/.cursor/skills`）、`gemini`（`~/.gemini/skills` / `<project>/.gemini/skills`）、`copilot`（个人 `~/.copilot/skills`；项目级 `<project>/.github/skills`，不是 `.copilot`）；`all` 由 5 类扩到 7 类；`install.sh` 的 usage 改为取到首个空行，避免后续加行把帮助截断；新增 `tests/test_install_targets.py`（两安装器目标集合一致 + 三家用户级/项目级路径，2 例按平台跳过） |
 | 4.8.3 | 2026-11-17 | **plugin 打包（P0-3 其二）**：仓库根同时充当两种插件根（`skills/` 已在根，两端默认发现规则都成立），新增 `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` 与 `.cursor-plugin/plugin.json` + `.cursor-plugin/marketplace.json`；marketplace 只有一个条目、`source: "."`（插件根=仓库根），用户安装为 `project-task-sop@agent-skill-kit`；`plugin.json` 的 `version` 写死就必须每次 bump（Claude Code 拿它当缓存键），故与 SKILL 标题同源并由新增的 `tests/test_plugin_manifests.py`（7 例）守住——名称 kebab-case、`skills/<name>/SKILL.md` 真实存在、两端 name/version 一致、marketplace 必填项与 `source` 可解析、每个技能目录名=frontmatter name |
 | 4.9.0 | 2026-11-17 | **强制力（P1-1）**：新增 `sop.py gates [--json] [--skip-if-missing]`——把 context / dims（过期）/ audit / entry / tasks 五道门压成一次调用、一个退出码，逐项打 ✅❌~ 并附修法，任一失败退出码 1；`--json` 输出单行机器可读结果；`--skip-if-missing` 让未接入 SOP 的项目安静放行，于是能挂进全局 pre-commit 与 Claude Code hook（片段见 SKILL.md「强制力」小节，**默认不自动安装**）。同时把 `refresh` 的过期判定抽成 `collect_stale()` 供两处共用（两条路径各算一遍迟早会漂）；`test_gates.py`（9 例，先红后绿，含 entry 未配置=跳过的语义） |
+| 4.10.0 | 2026-11-17 | **台账驱动（P1-2）**：新增 `sop.py next [--json]`——按 `status` + `depends` 算可执行前沿（第 1 波 = 无未完成前置的 doing/pending）、后续波次（迭代松弛算层级）、阻塞原因（等谁 + 它的状态）；引用缺失或 `depends` 成环进「无法排序」而不是死循环；`dropped` 前置不阻塞后继并标注；空台账提示暂无任务。**只做约束推导，不排优先级、不推工期**（避免脚本假装懂业务）。**报告里的 `--claim`（写 owner）本次不做**：owner 属 P1-3，且 `ai/` 不进库使 owner 无法跨机同步、无租约的 claim 是假锁——理由写入 `reference/task-ledger.md`；`test_next.py`（10 例，先红后绿） |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

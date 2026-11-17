@@ -43,6 +43,37 @@ python sop.py tasks --check  # 结构 + 同步校验（可进 CI）
 - `refresh --mark-fresh` 会自动重生成台账，但**不会**替你改状态：状态永远由人在 plan.md 里改。
 - `check --context` 会顺带打印台账告警（不阻塞上下文校验）。
 
+## 可执行前沿（`sop.py next`）
+
+台账是表，`next` 才是队列：给定 `status` + `depends`，它算"现在能做什么、被谁挡着"。
+
+```sh
+python sop.py next          # 第 1 波（现在可做）/ 第 2..N 波（等前序）/ 阻塞原因 / 无法排序
+python sop.py next --json   # 机器可读：ready / blocked / unsorted / waves
+```
+
+判定规则（都是机械的，不含判断）：
+
+| 情形 | 归到哪 |
+|------|--------|
+| `status` 为 `doing` / `pending`，且 `depends` 里没有未完成项（`done` / `dropped` / 不存在都算已了结） | 第 1 波（现在可做） |
+| 有未完成的 `depends` | 后续波次，行内标明「等 `x`(pending)」 |
+| `depends` 已满足但 `status=blocked` | 外部阻塞（不是依赖问题，去查那个任务本身为什么 blocked） |
+| `depends` 指向的任务不存在，或 `depends` 成环 | 无法排序（退出码仍是 0，不阻塞流程） |
+| `status` 为 `done` / `dropped` | 不出现 |
+
+**它不做的事（刻意的）**：不按重要性/紧急度排序、不推工期、不做 stale 告警。这三件都需要业务语义与主观阈值，脚本排了只会让人误以为"这就是该做的"。
+
+### 为什么没有 `--claim`
+
+早期设计（对外报告 P1-2）写的是 `next --claim` 写 `owner`，实现时判断**现在不该做**：
+
+- `ai/` 不进版本库（推荐形态如此）。owner 写进 `plan.md` 后不跨机同步，正是最需要"认领"的多人场景失效。
+- 没有租约的 claim 是假锁：两个会话同时 claim 会互相覆盖，会话崩了 `doing` 永久残留，没有回收机制。
+- `status: doing` 本来就承担"有人在做"的信号，`--claim` 只省一次手工编辑，却多一条写 `plan.md` 的路径。
+
+要真做，前提是先有 P1-3 的 owner 字段 + 冲突/租约策略。在此之前，**开工时手工把 `status` 改 `doing`** 就是约定的认领动作。
+
 ## 存量项目接入（已有任务没有台账字段）
 
 老项目 `ai/*/plan.md` 通常只有 `task.id/task.title/task.type/objective`，没有 `status/depends/relates/updated`。**不要手抄**——逐份手改会漏字段、写错日期，且无法幂等重跑。

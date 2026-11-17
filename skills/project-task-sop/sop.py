@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.9.0 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.10.0 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -19,6 +19,7 @@ v4 核心变更（2026-10-28，不兼容 v3.x）：
   refresh            按 manifest 锚点检测过期维度 [--mark-fresh 封存 + 重写 AGENTS.md 生成区]
   entry              生成/校验仓库入口文件（生成区=纪律索引+任务路由，手写区不动；--check 5 条 lint）
   tasks              任务台账：扫各任务 plan.md 字段表聚合 ai/TASKS.md [--check 校验 / --backfill 存量补录]
+  next               可执行前沿：按 status + depends 算「现在能做什么、被谁挡着、哪几波」，不排优先级（--json）
   check --context    manifest 结构 + 一致性 + 锚点命中校验（check <task> 仍为 JSONL 校验）
   dedup <task>       实验查重（精确哈希）
   record <task>      追加实验记录到 .experiments.jsonl
@@ -2099,6 +2100,154 @@ def cmd_audit(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 命令：next（台账可执行前沿——只做约束推导，不排优先级）
+# ---------------------------------------------------------------------------
+
+def next_dep_state(depends, by_id) -> dict:
+    """把 depends 分类成 done / dropped / open（未完成）/ missing（引用不存在）。"""
+    state = {"done": [], "dropped": [], "open": [], "missing": []}
+    for dep in depends:
+        other = by_id.get(dep)
+        if other is None:
+            state["missing"].append(dep)
+        elif other["status"] == "done":
+            state["done"].append(dep)
+        elif other["status"] == "dropped":
+            state["dropped"].append(dep)
+        else:
+            state["open"].append(dep)
+    return state
+
+
+def next_levels(tasks) -> tuple:
+    """按 depends 迭代松弛算层级（1 = 无未完成前置）；算不出的就是缺失引用或成环。"""
+    by_id = {t["id"]: t for t in tasks}
+    pending = [t for t in tasks if t["status"] not in ("done", "dropped")]
+    levels, states = {}, {}
+    while True:
+        progressed = False
+        for t in pending:
+            if t["id"] in levels:
+                continue
+            st = next_dep_state(t["depends"], by_id)
+            states[t["id"]] = st
+            if st["missing"] or not all(d in levels for d in st["open"]):
+                continue
+            levels[t["id"]] = 1 + max([levels[d] for d in st["open"]] or [0])
+            progressed = True
+        if not progressed:
+            break
+    return levels, states
+
+
+def _dep_label(dep, by_id) -> str:
+    other = by_id.get(dep)
+    return "`{}`({})".format(dep, other["status"] if other else "缺失")
+
+
+def _print_wave(level, items, by_id) -> None:
+    head = ("第 {} 波（现在可做）".format(level) if level == 1
+            else "第 {} 波（等前序）".format(level))
+    print(head)
+    for t, st in items:
+        note = ""
+        if st["open"]:
+            note = "← 等 " + "、".join(_dep_label(d, by_id) for d in st["open"])
+        if st["dropped"]:
+            tail = "前置已放弃 {}".format("、".join("`{}`".format(d) for d in st["dropped"]))
+            note = (note + "；" + tail) if note else tail
+        print("  - `{}` [{}] {}{}".format(t["id"], t["status"], t["title"],
+                                          (" " + note) if note else ""))
+
+
+def cmd_next(args) -> int:
+    """输出可执行前沿：现在能做什么、被谁挡着、哪些排不出来。"""
+    root = Path(args.root).resolve()
+    tasks = collect_tasks(root / "ai")
+    if not tasks:
+        print("（ai/ 下暂无任务 plan.md：先用模板建 ai/<task>/plan.md，再跑 `sop.py tasks`）")
+        return 0
+
+    by_id = {t["id"]: t for t in tasks}
+    levels, states = next_levels(tasks)
+    unfinished = [t for t in tasks if t["status"] not in ("done", "dropped")]
+
+    ready, blocked, external, unsorted_tasks = [], [], [], []
+    for t in unfinished:
+        st = states.get(t["id"]) or next_dep_state(t["depends"], by_id)
+        if t["id"] not in levels:
+            unsorted_tasks.append((t, st))
+        elif st["open"]:
+            blocked.append((t, st))
+        elif t["status"] == "blocked":
+            external.append((t, st))
+        else:
+            ready.append((t, st))
+
+    def order(pairs):
+        return sorted(pairs, key=lambda p: (0 if p[0]["status"] == "doing" else 1, p[0]["id"]))
+
+    waves = {}
+    for t, st in ready + blocked:
+        waves.setdefault(levels[t["id"]], []).append((t, st))
+
+    if getattr(args, "json", False):
+        payload = {
+            "tasks": len(tasks),
+            "unfinished": len(unfinished),
+            "ready": [dict(t, wave=levels[t["id"]]) for t, _ in order(ready)],
+            "blocked": [
+                {"id": t["id"], "status": t["status"], "title": t["title"],
+                 "wave": levels[t["id"]],
+                 "blocking": [{"id": d, "status": by_id[d]["status"]} for d in st["open"]]}
+                for t, st in order(blocked)
+            ],
+            "unsorted": [
+                {"id": t["id"], "status": t["status"], "title": t["title"],
+                 "missing": st["missing"],
+                 "cycle": [d for d in st["open"] if d not in levels]}
+                for t, _ in order(unsorted_tasks)
+            ],
+            "waves": [
+                {"wave": lvl, "tasks": [t["id"] for t, _ in order(waves[lvl])]}
+                for lvl in sorted(waves)
+            ],
+        }
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    print("next: {} 个任务 / {} 个未完成".format(len(tasks), len(unfinished)))
+    if not unfinished:
+        print("\n✅ 所有任务已完成或已放弃。")
+        return 0
+
+    for lvl in sorted(waves):
+        print("")
+        _print_wave(lvl, order(waves[lvl]), by_id)
+
+    if external:
+        print("\n外部阻塞（depends 已满足，但 status=blocked）")
+        for t, _ in order(external):
+            print("  - `{}` [{}] {}".format(t["id"], t["status"], t["title"]))
+
+    if unsorted_tasks:
+        print("\n无法排序（depends 引用缺失或成环）")
+        for t, st in order(unsorted_tasks):
+            bits = []
+            if st["missing"]:
+                bits.append("等 " + "、".join("`{}`(缺失)".format(d) for d in st["missing"]))
+            stuck = [d for d in st["open"] if d not in levels]
+            if stuck:
+                bits.append("depends 成环：" + "、".join("`{}`".format(d) for d in stuck))
+            print("  - `{}` [{}] {}{}".format(t["id"], t["status"], t["title"],
+                                              (" ← " + "；".join(bits)) if bits else ""))
+
+    if not ready:
+        print("\n当前没有可执行任务：先解掉上面列出的阻塞，或把前置改 done/dropped。")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # 命令：gates（四道门 + 新鲜度检查合成一次调用，供 pre-commit / hook 引用）
 # ---------------------------------------------------------------------------
 
@@ -2646,7 +2795,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.9.0（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.10.0（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")
@@ -2739,6 +2888,10 @@ def build_parser() -> argparse.ArgumentParser:
     pg.add_argument("--skip-if-missing", action="store_true",
                     help="未接入 SOP（缺 ai/）时安静通过，便于 hook 在任意项目里运行")
 
+    pn = sub.add_parser("next", help="台账可执行前沿：现在能做什么、被谁挡着（只有 depends 约束，不排优先级）")
+    pn.add_argument("--root", default=".")
+    pn.add_argument("--json", action="store_true", help="机器可读输出（单行 JSON）")
+
     pmig = sub.add_parser("migrate", help="v3 → v4 半自动迁移：解析旧 sop.py 常量生成 manifest + 补维度摘要行")
     pmig.add_argument("--root", default=".")
     pmig.add_argument("--old-sop", default=None,
@@ -2769,7 +2922,7 @@ def main(argv=None) -> int:
         "record": cmd_record, "render": cmd_render, "check": cmd_check,
         "lessons": cmd_lessons, "tokens": cmd_tokens, "dims": cmd_dims,
         "audit": cmd_audit, "migrate": cmd_migrate, "entry": cmd_entry,
-        "tasks": cmd_tasks, "scan": cmd_scan, "gates": cmd_gates,
+        "tasks": cmd_tasks, "scan": cmd_scan, "gates": cmd_gates, "next": cmd_next,
     }
     return handlers[args.cmd](args)
 
