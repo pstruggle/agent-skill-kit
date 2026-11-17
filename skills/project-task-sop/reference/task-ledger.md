@@ -93,7 +93,44 @@ python sop.py next --release <task-id>            # 释放：删锁 + status=pen
 
 **已知取舍**：认领是**协作信号，不是互斥锁**——`sop.py` 不会阻止别人直接改同一个文件。要更强的保证只能上外部锁服务，那超出这个 skill 的定位（无依赖、纯本地）。
 
+### 多机同时认领：冲突怎么处理（`ai/` 进库时才发生）
+
+`ai/` 进版本库的项目里，`.claim` 与 `plan.md` 的 `owner`/`claimed` 都会随提交走。两台机器各自认领同一任务，git 侧的表现是：`.claim` 冲突，或后提交者覆盖前者；`plan.md` 的字段表同样冲突。
+
+处理顺序（**以 `.claim` 为权威**，因为它带精确的 `claimed` 与 `lease`）：
+
+1. `git pull` 之后先跑 `python sop.py tasks --check`：看「owner 与锁不一致 / 缺锁 / 认领超时」这几条告警；再用 `python sop.py next` 看该行有没有「`X` 认领中，剩 N 分钟」。
+2. **锁主人不是你、且租约没到期** → 停手，换别的任务做。不要去改那份文件"顺手统一一下"。
+3. **你已经动过代码、确实要接手** → 先在 `ai/<task>/NOTES.md` 写一句「YYYY-MM-DD 从 `X` 接手（原因）」，再 `python sop.py next --claim <id> --force`。这条力命令会同时重写 `plan.md` 的两个字段与 `.claim`，两边就一致了。
+4. **锁记录已损坏/手写坏**（`minutes_left` 为 -1）→ 直接 `--claim --force` 接管，`tasks --check` 的超时告警会提示该任务。
+5. **绝不手工拼接两个 `.claim` 的 JSON**：JSON 拼接产出的是语法正确但语义混乱的锁，之后每个会话都要重新排查。
+
+不做的事：不做"自动按时间戳仲裁"——`claimed` 更晚的人该不该优先，是人的判断（他可能只是重复点了两次）；工具只负责把冲突**暴露出来**并让接管**可执行**。
+
+### 机器可读导出（`tasks --json`）
+
+给自动化用（CI 看板、demo 对比仓库采指标、外部脚本），不必解析 Markdown 表格：
+
+```sh
+python sop.py tasks --json        # 单行 JSON，只读，不写台账
+```
+
+| 字段 | 含义 |
+|------|------|
+| `tasks` / `unfinished` / `edges` | 任务总数 / 未完成数 / 关联边数 |
+| `stats` | 按 status 计数（`{"done": 3, "doing": 1, ...}`） |
+| `items[]` | 每个任务：`id` `dir` `title` `type` `mode` `status` `statusRaw` `parent` `supersedes` `owner` `claimed` `depends` `relates` `blocked_by` `updated` |
+| `items[].depends_open` | **算出来的**未完成前置（不是原样回显 `depends`）——脚本不用自己再判状态 |
+| `items[].depends_missing` | 声明了但不存在的依赖 id（对应 `tasks --check` 的 err） |
+| `items[].claim` | 有 `.claim` 锁时为 `{owner, claimed, lease, minutes_left}`，无锁为 `null` |
+
+- `--json` 优先于 `--check` / `--backfill`：导出就是导出，不顺手改文件、不写 `TASKS.md`。
+- 和 `next --json` 的分工：`next --json` 只给"前沿"（能做什么/排不出来），`tasks --json` 给**全量快照**（含负责人与租约）。
+- 机器可读不等于稳定契约：字段可加不可改，消费方按 key 取，别按位置解析。
+
 ## 存量项目接入（已有任务没有台账字段）
+
+
 
 老项目 `ai/*/plan.md` 通常只有 `task.id/task.title/task.type/objective`，没有 `status/depends/relates/updated`。**不要手抄**——逐份手改会漏字段、写错日期，且无法幂等重跑。
 

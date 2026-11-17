@@ -12,7 +12,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.11.0 — 轻量任务执行规程
+# Project Task SOP v4.12.0 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -120,7 +120,7 @@ ai/
 
 - 必填：`task.id/title/type`、`objective`、`scope.included`、`acceptance`、`steps`。
 - 可选：`assumptions`，仅在用户授权跳过关键边界澄清时记录所采用的关键假设。
-- **台账字段**（`status` / `parent` / `depends` / `relates` / `supersedes` / `updated`）：写在 plan.md 顶部字段表，由 `sop.py tasks` 聚合到 `ai/TASKS.md`。开任务写 `status: doing|pending`，收工改 `done` + `updated`；要让对方挡住我用 `depends`，只是同主题用 `relates`（详见 `reference/task-ledger.md`）。
+- **台账字段**（`status` / `parent` / `depends` / `relates` / `supersedes` / `owner` / `claimed` / `updated`）：写在 plan.md 顶部字段表，由 `sop.py tasks` 聚合到 `ai/TASKS.md`。开任务写 `status: doing|pending`，收工改 `done` + `updated`；要让对方挡住我用 `depends`，只是同主题用 `relates`（详见 `reference/task-ledger.md`）。
 - 缺失或字段不全 → 先补全再执行（light 可只写最小计划；台账字段缺失只会告警，不阻塞执行）。
 
 ## 3. 教训与实验（按模式）
@@ -151,7 +151,7 @@ ai/
 | `python sop.py refresh [--mark-fresh] [--only 12,13]` | 按 manifest 锚点检测过期维度；`--mark-fresh` 封存锚点 + 版本递增 + 重写 AGENTS.md 生成区；`--only` 只封存指定维度（id 或 key，逗号/空格分隔），其余维度保持旧锚点 |
 | `python sop.py check --context [--root .]` | 校验 manifest 结构 / manifest↔context 一致性 / 锚点命中率；启用 `entry` 时顺带做入口文件 lint（告警不阻塞） |
 | `python sop.py entry [--check] [--force] [--out 路径]` | 按 manifest `entry` + 各维度 `entryHint` 生成/刷新仓库入口文件（生成区=纪律索引+任务路由+维护契约；手写区不动）；`--check` 校验行数/权威声明/凭据/时效状态/生成区是否同步 |
-| `python sop.py tasks [--check] [--backfill [--dry-run] [--status S] [--no-suggest]] [--out 路径]` | 任务台账：扫 `ai/*/plan.md` 字段表（status/parent/depends/relates/supersedes/updated）聚合为 `ai/TASKS.md`；`--check` 校验状态枚举/id 唯一/引用存在/成环 + 台账是否与 plan.md 同步；`--backfill` 存量接入：给缺台账字段的老 plan.md 补行（**先 `--dry-run` 预览**，缺省 `pending` 并列入「需人工确认」，NOTES 有验收记录才推断 `done`，只打印关系建议不写入） |
+| `python sop.py tasks [--check] [--backfill [--dry-run] [--status S] [--no-suggest]] [--out 路径] [--json]` | 任务台账：扫 `ai/*/plan.md` 字段表（status/parent/depends/relates/supersedes/owner/claimed/updated）聚合为 `ai/TASKS.md`；`--check` 校验状态枚举/id 唯一/引用存在/成环 + 台账是否与 plan.md 同步 + 认领租约告警；`--backfill` 存量接入：给缺台账字段的老 plan.md 补行（**先 `--dry-run` 预览**，缺省 `pending` 并列入「需人工确认」，NOTES 有验收记录才推断 `done`，只打印关系建议不写入）；`--json` 只读导出全量快照（含派生 `depends_open` / `depends_missing` / `claim`），不写台账 |
 | `python sop.py next [--json]` | **可执行前沿**：按 `status` + `depends` 算第 1 波（现在可做）/ 后续波次 / 阻塞原因（等谁、它是什么状态）/ 无法排序（引用缺失或成环）；`dropped` 前置不阻塞后继并在行内标注「前置已放弃」；**不排优先级、不推工期**（那是语义判断） |
 | `python sop.py next --claim <id> [--as 名] [--lease 分] [--force]` / `--release <id>` | **认领/释放**：`--claim` 写 `owner`/`claimed` + `status=doing` + 建 `ai/<task>/.claim` 租约锁（同机 `O_EXCL` 原子，抢不到会报"刚被另一个会话抢到"）；未到期抢占要 `--force`，超时可接管；`--release` 删锁并回 `pending`。`tasks --check` 会对超时/缺锁/owner 不一致告警 |
 | `python sop.py dedup <task> -m <method> -p '<json>'` | 实验查重（`-p` 也可用 `-p k=v` 重复多次，规避 shell 引号问题） |
@@ -248,5 +248,6 @@ python path/to/skills/project-task-sop/sop.py gates --root "$(git rev-parse --sh
 | 4.9.0 | 2026-11-17 | **强制力（P1-1）**：新增 `sop.py gates [--json] [--skip-if-missing]`——把 context / dims（过期）/ audit / entry / tasks 五道门压成一次调用、一个退出码，逐项打 ✅❌~ 并附修法，任一失败退出码 1；`--json` 输出单行机器可读结果；`--skip-if-missing` 让未接入 SOP 的项目安静放行，于是能挂进全局 pre-commit 与 Claude Code hook（片段见 SKILL.md「强制力」小节，**默认不自动安装**）。同时把 `refresh` 的过期判定抽成 `collect_stale()` 供两处共用（两条路径各算一遍迟早会漂）；`test_gates.py`（9 例，先红后绿，含 entry 未配置=跳过的语义） |
 | 4.10.0 | 2026-11-17 | **台账驱动（P1-2）**：新增 `sop.py next [--json]`——按 `status` + `depends` 算可执行前沿（第 1 波 = 无未完成前置的 doing/pending）、后续波次（迭代松弛算层级）、阻塞原因（等谁 + 它的状态）；引用缺失或 `depends` 成环进「无法排序」而不是死循环；`dropped` 前置不阻塞后继并标注；空台账提示暂无任务。**只做约束推导，不排优先级、不推工期**（避免脚本假装懂业务）。`test_next.py`（10 例，先红后绿） |
 | 4.11.0 | 2026-11-17 | **认领（P1-2 余项 + P1-3 其一）**：`next --claim <id> [--as] [--lease] [--force]` / `--release <id>`——写 `plan.md` 的 `owner`/`claimed` + `status=doing`，并用 `ai/<task>/.claim`（`O_CREAT\|O_EXCL`）做同机原子锁、带租约（默认 120 分钟）：未到期抢占必须 `--force`，超时可接管；`tasks --check` 新增认领超时 / 有 owner 缺锁 / owner 与锁不一致 / 已完成仍留锁四类告警；台账新增「负责人」列。**边界如实写明**：同机互斥、跨机只能靠租约与 git 冲突可见，不是分布式锁。`test_claim.py`（16 例，先红后绿） |
+| 4.12.0 | 2026-11-17 | **P1-3 收尾**：`sop.py tasks --json` 只读导出全量快照（`tasks`/`unfinished`/`edges`/`stats`/`items[]`，items 带派生 `depends_open`/`depends_missing`/`blocked_by`/`claim{owner,claimed,lease,minutes_left}`），自动化不必解析 Markdown 表格；`reference/task-ledger.md` 补「多机同时认领的冲突处理」——以 `.claim` 为权威、先查告警再决定接手、接管只能走 `--claim --force`、禁止手拼 JSON，且明说不做时间戳自动仲裁。`test_tasks_json.py`（7 例，先红后绿） |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

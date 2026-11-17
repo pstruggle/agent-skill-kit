@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.11.0 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.12.0 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -1906,6 +1906,45 @@ def cmd_tasks_backfill(ai_dir: Path, args) -> int:
     return 0
 
 
+def tasks_payload(ai_dir: Path, tasks: list) -> dict:
+    """台账的机器可读快照：全量任务 + 派生字段（被依赖/未完成前置/认领租约）+ 统计。"""
+    edges, blocked_by = task_edges(tasks)
+    by_id = {t["id"]: t for t in tasks}
+    items = []
+    for t in sorted(tasks, key=lambda x: (x["status"], x["id"])):
+        lock = ai_dir / t["dir"] / CLAIM_NAME
+        claim = read_claim(lock) if lock.is_file() else {}
+        items.append({
+            "id": t["id"], "dir": t["dir"], "title": t["title"], "type": t["type"],
+            "mode": t["mode"], "status": t["status"], "statusRaw": t["statusRaw"],
+            "parent": t["parent"], "supersedes": t["supersedes"],
+            "owner": t["owner"], "claimed": t["claimed"],
+            "depends": t["depends"], "relates": t["relates"],
+            "depends_open": [d for d in t["depends"]
+                             if d in by_id and by_id[d]["status"] not in ("done", "dropped")],
+            "depends_missing": [d for d in t["depends"] if d not in by_id],
+            "blocked_by": blocked_by.get(t["id"], []),
+            "updated": t["updated"],
+            "claim": ({
+                "owner": claim.get("owner"),
+                "claimed": claim.get("claimed"),
+                "lease": claim.get("lease", DEFAULT_CLAIM_LEASE),
+                "minutes_left": claim_minutes_left(claim),
+            } if claim else None),
+        })
+    stats = {}
+    for t in tasks:
+        stats[t["status"]] = stats.get(t["status"], 0) + 1
+    unfinished = sum(1 for t in tasks if t["status"] not in ("done", "dropped"))
+    return {
+        "tasks": len(tasks),
+        "unfinished": unfinished,
+        "edges": len(edges),
+        "stats": stats,
+        "items": items,
+    }
+
+
 def cmd_tasks(args) -> int:
     root = Path(args.root).resolve()
     ai_dir = root / "ai"
@@ -1919,6 +1958,9 @@ def cmd_tasks(args) -> int:
         print("（ai/ 下暂无任务 plan.md）")
         return 0
     issues = tasks_lint(tasks) + claim_lint(ai_dir, tasks)
+    if getattr(args, "json", False):
+        print(json.dumps(tasks_payload(ai_dir, tasks), ensure_ascii=False))
+        return 0
     text = render_tasks(tasks, issues)
     target = Path(args.out).resolve() if getattr(args, "out", None) else ai_dir / TASKS_FILE
     edges = len(task_edges(tasks)[0])
@@ -3028,7 +3070,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.11.0（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.12.0（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")
@@ -3061,6 +3103,8 @@ def build_parser() -> argparse.ArgumentParser:
     ptask.add_argument("--check", action="store_true",
                        help="只校验：status 枚举 / id 唯一 / 引用存在 / depends 成环 / 台账是否与 plan.md 同步")
     ptask.add_argument("--out", default=None, help="自定义台账路径（默认 ai/TASKS.md）")
+    ptask.add_argument("--json", action="store_true",
+                       help="只读导出：单行 JSON（全量任务 + 派生字段 + 认领租约 + 统计），不写台账")
     ptask.add_argument("--backfill", action="store_true",
                        help="存量接入：给缺台账字段的 plan.md 补 status/parent/depends/relates/updated（建议先 --dry-run）")
     ptask.add_argument("--status", default="pending",
