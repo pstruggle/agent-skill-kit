@@ -15,10 +15,11 @@ agent-skill-kit/
 ├─ tests/
 │  ├─ test_sop.py        # sop.py 命令行回归（42 例）
 │  ├─ test_scan.py       # init 后自动推导 scan 的行为契约（10 例）
+│  ├─ test_gates.py      # 五道门聚合与 hook 友好参数（9 例）
 │  ├─ test_install_targets.py # ps1/sh 目标一致 + 三家新目标路径（5 例，2 例按平台跳过）
 │  ├─ test_plugin_manifests.py # 两端 plugin/marketplace 清单契约（7 例）
 │  └─ test_version_sync.py # 五处版本号 + frontmatter 子命令清单 + 触发面守卫（6 例）
-│                        # 合计 70 例，标准库 unittest，无第三方依赖
+│                        # 合计 79 例，标准库 unittest，无第三方依赖
 ├─ .claude-plugin/       # Claude Code 插件清单 + 市场目录
 │  ├─ plugin.json
 │  └─ marketplace.json
@@ -43,12 +44,27 @@ agent-skill-kit/
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记；可直接作为 Claude Code / Cursor 插件安装 | 4.8.3 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记、五道门一次跑完（gates）；可直接作为 Claude Code / Cursor 插件安装 | 4.9.0 |
+
+## 五道门与强制力
+
+四道门（结构校验 / 归属审计 / 入口校验 / 台账校验）外加维度新鲜度，合成一条命令：
+
+```sh
+python skills/project-task-sop/sop.py gates --root <项目根>
+```
+
+逐项打 `✅` / `❌` / `~`（entry 未配置时是跳过，不算红），任一失败退出码 1，并打印对应修法。`--json` 输出单行机器可读结果，`--skip-if-missing` 让未接入 SOP 的项目安静放行——正因为后两者，它才能直接挂到机制上：
+
+- **git `pre-commit`**：提交前拦红门；
+- **Claude Code `Stop` hook**：一轮结束前跑一次，避免"说完了才发现门是红的"。
+
+片段在 `SKILL.md` 的「强制力」小节。**默认不安装**：hook 会改变每次提交/每轮对话的行为，装不装是使用者的选择。这个技能本身不持强制力——装了才有，没装就只有纪律。
 
 ## 回归测试
 
 ```sh
-python -m unittest discover -s tests -v      # 70 用例，约 36 s，全部在临时目录里跑（2 例按平台跳过）
+python -m unittest discover -s tests -v      # 79 用例，约 45 s，全部在临时目录里跑（2 例按平台跳过）
 ```
 
 `sop.py` 是纯标准库实现的单文件 CLI，改完至少跑一遍：
@@ -61,6 +77,7 @@ python skills/project-task-sop/sop.py refresh --mark-fresh --root <项目根>
 python skills/project-task-sop/sop.py audit --root <项目根>
 python skills/project-task-sop/sop.py entry --check --root <项目根>
 python skills/project-task-sop/sop.py tasks --check --root <项目根>
+python skills/project-task-sop/sop.py gates --root <项目根>       # 五道门一次跑完（收工前/CI/pre-commit 用）
 # 存量项目首次接入台账（先预览，确认后再落盘）
 python skills/project-task-sop/sop.py tasks --backfill --dry-run --root <项目根>
 ```
@@ -226,7 +243,7 @@ cd agent-skill-kit
 
 Run `--list` to see the skills and destinations, `--mode link` to symlink instead of copy, `--uninstall` to remove, `--help` for the full flag list.
 
-Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / scan / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/` (stdlib `unittest`, 70 cases, no third-party deps).
+Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / scan / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/` (stdlib `unittest`, 79 cases, no third-party deps).
 
 The repo root doubles as a plugin root for both Claude Code (`.claude-plugin/`) and Cursor (`.cursor-plugin/`): register it with `claude plugin marketplace add pstruggle/agent-skill-kit`, then `claude plugin install project-task-sop@agent-skill-kit`.
 

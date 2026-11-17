@@ -1,6 +1,6 @@
 {
   "name": "project-task-sop",
-  "version": "4.8.3",
+  "version": "4.9.0",
   "description": "多会话、多 Agent 项目的上下文与任务台账规程：启动前边界对齐、规模决策门、manifest 驱动的模块化上下文、plan.md 聚合台账、仓库入口生成、教训检索。让下一个会话不用重新摸清仓库。",
   "author": {
     "name": "pstruggle",

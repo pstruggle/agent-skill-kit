@@ -1,6 +1,6 @@
 ---
 name: project-task-sop
-description: 多会话、多 Agent 的项目里维护上下文与任务台账，让下一个会话不用重新摸清仓库。触发语："接着上次做"、"上次做到哪了"、"这个仓库之前怎么改的"、"别重复踩坑"、"上下文过期了吗"、"任务排一下，接下来做哪个"、"开工前先对齐边界"。命令：init/scan/refresh/entry/tasks/dedup/record/render/check/lessons/tokens/dims/audit/migrate
+description: 多会话、多 Agent 的项目里维护上下文与任务台账，让下一个会话不用重新摸清仓库。触发语："接着上次做"、"上次做到哪了"、"这个仓库之前怎么改的"、"别重复踩坑"、"上下文过期了吗"、"任务排一下，接下来做哪个"、"开工前先对齐边界"、"收工前把门跑一遍"。命令：init/scan/refresh/entry/tasks/dedup/record/render/check/lessons/tokens/dims/audit/gates/migrate
 whenToUse:
   - 用户说"接着上次做"、"上次做到哪了"、"继续这个项目"
   - 用户问"这个仓库之前怎么改的"、"为什么这里这么设计"
@@ -12,7 +12,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.8.3 — 轻量任务执行规程
+# Project Task SOP v4.9.0 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -137,7 +137,7 @@ ai/
 
 ```
 循环：执行 plan 步骤 → 决策点追加 NOTES → (full) record 实验 → 更新 plan 状态
-收尾：(full) sop.py check 校验记录一致；对照 DoD
+收尾：`python sop.py gates` 一次跑完五道门（context / dims / audit / entry / tasks），红了先修；对照 DoD
 ```
 
 ## sop.py 速查（位于本 skill 根目录）
@@ -158,13 +158,41 @@ ai/
 | `python sop.py tokens <file...>` | 估算 token 量（中 ~1.5 字/token）；`refresh --mark-fresh` 自动写入 AGENTS.md 上下文估算 |
 | `python sop.py dims <task_type> [--root .]` | 从 manifest 聚合查询任务类型必读/可选维度（免读索引） |
 | `python sop.py audit [--root .] [--check]` | 维度归属审计：扫环境事实误入非法维度 / 跨维度重复 / 交叉引用失效三类可疑点（合法维度集合从 manifest `attribution["env-facts"]` 读取，只报可疑，判定按 §1.5 归属表人工裁决；`--check` 有问题时退出码非 0） |
+| `python sop.py gates [--json] [--skip-if-missing]` | **五道门一次跑完**：context / dims（过期）/ audit / entry / tasks，逐项打 ✅❌~ 并给修法，任一失败退出码 1；`--json` 输出单行机器可读结果；`--skip-if-missing` 在未接入 SOP 的项目里安静放行（给全局 hook 用） |
 | `python sop.py migrate [--root .] [--old-sop path] [--code-root path] [--dims-json path] [--dry-run] [--force]` | v3 → v4 半自动迁移：解析旧 sop.py 常量生成 manifest + 补维度文件摘要行 + AGENTS.md 分区改造（详见 `reference/migration-v3-to-v4.md`） |
 
 > `python sop.py --help` 查看全部参数。所有产出 UTF-8、LF。变更检测基于文件哈希（工作区感知），不依赖 git。锚点 glob 相对 manifest 的 `codeRoot` 解析（缺省为 root；ai 产物目录与代码目录分离时务必设置）。
 
+### 强制力：把门交给机制（可选，默认不装）
+
+四道门最大的敌人不是难度，是"忘了跑"。`gates` 的价值就是把五条命令压成一个退出码，于是可以挂到机制上：
+
+```sh
+# ① git pre-commit（每个项目各装一次；.git/hooks/pre-commit 需 chmod +x）
+#!/bin/sh
+python path/to/skills/project-task-sop/sop.py gates --root "$(git rev-parse --show-toplevel)" --skip-if-missing || exit 1
+```
+
+```json
+// ② Claude Code 项目级 hook（<project>/.claude/settings.json）：Stop 时跑一次，避免"说完了才发现门是红的"
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command",
+        "command": "python path/to/skills/project-task-sop/sop.py gates --root . --skip-if-missing" } ] }
+    ]
+  }
+}
+```
+
+- 都带 `--skip-if-missing`：没接 SOP 的项目直接放行，不改别人的工作流。
+- **默认不自动安装**：hook 会改变每次会话/每次提交的行为，属于使用者的选择；SKILL 只提供片段。
+- 本 skill 自身不持有强制力（无守护进程、无后台）。装了 hook 才有强制力，没装就只有纪律。
+
 ## 验收标准（DoD）
 
 - [ ] 按模式产出齐全：light→plan；standard→+NOTES；full→+`.experiments.jsonl` 且 `sop.py check` 通过
+- [ ] `python sop.py gates` 五道门全绿（entry 未配置时该门显示跳过，不算红）
 - [ ] `ai/AGENTS.md` 反映当前项目状态，版本号已更新
 - [ ] 关键边界已对齐；如使用直接执行例外，`plan.md` 的 `assumptions` 已记录关键假设
 - [ ] 决策点均有 NOTES 记录，可追溯
@@ -213,5 +241,6 @@ ai/
 | 4.8.1 | 2026-11-17 | **触发面（P0-1）**：frontmatter `description` 由「功能清单」改为「场景 + 口语触发语」（接着上次做 / 这个仓库之前怎么改的 / 别重复踩坑 / 上下文过期了吗 / 任务排一下…），命令枚举压缩为末尾一行、仍覆盖全部子命令；`whenToUse` 4 条抽象场景改写为 7 条用户原话；新增两条守卫（触发语 ≥4 条且 description ≤800 字符、whenToUse ≥3 条口语），防止下次改描述又退回能力罗列 |
 | 4.8.2 | 2026-11-17 | **分发面（P0-3 其一）**：两个安装器新增 `cursor`（`~/.cursor/skills` / `<project>/.cursor/skills`）、`gemini`（`~/.gemini/skills` / `<project>/.gemini/skills`）、`copilot`（个人 `~/.copilot/skills`；项目级 `<project>/.github/skills`，不是 `.copilot`）；`all` 由 5 类扩到 7 类；`install.sh` 的 usage 改为取到首个空行，避免后续加行把帮助截断；新增 `tests/test_install_targets.py`（两安装器目标集合一致 + 三家用户级/项目级路径，2 例按平台跳过） |
 | 4.8.3 | 2026-11-17 | **plugin 打包（P0-3 其二）**：仓库根同时充当两种插件根（`skills/` 已在根，两端默认发现规则都成立），新增 `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` 与 `.cursor-plugin/plugin.json` + `.cursor-plugin/marketplace.json`；marketplace 只有一个条目、`source: "."`（插件根=仓库根），用户安装为 `project-task-sop@agent-skill-kit`；`plugin.json` 的 `version` 写死就必须每次 bump（Claude Code 拿它当缓存键），故与 SKILL 标题同源并由新增的 `tests/test_plugin_manifests.py`（7 例）守住——名称 kebab-case、`skills/<name>/SKILL.md` 真实存在、两端 name/version 一致、marketplace 必填项与 `source` 可解析、每个技能目录名=frontmatter name |
+| 4.9.0 | 2026-11-17 | **强制力（P1-1）**：新增 `sop.py gates [--json] [--skip-if-missing]`——把 context / dims（过期）/ audit / entry / tasks 五道门压成一次调用、一个退出码，逐项打 ✅❌~ 并附修法，任一失败退出码 1；`--json` 输出单行机器可读结果；`--skip-if-missing` 让未接入 SOP 的项目安静放行，于是能挂进全局 pre-commit 与 Claude Code hook（片段见 SKILL.md「强制力」小节，**默认不自动安装**）。同时把 `refresh` 的过期判定抽成 `collect_stale()` 供两处共用（两条路径各算一遍迟早会漂）；`test_gates.py`（9 例，先红后绿，含 entry 未配置=跳过的语义） |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

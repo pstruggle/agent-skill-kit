@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.8.3 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.9.0 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -28,6 +28,7 @@ v4 核心变更（2026-10-28，不兼容 v3.x）：
   tokens <file...>   token 量估算（中文 ~1.5 字/token，英文 ~4 字/token）
   dims <task_type>   从 manifest 聚合查询任务类型的必读/可选维度
   audit             维度归属审计：扫环境事实误入/跨维度重复/交叉引用失效（合法归属从 manifest attribution 读取；可疑点报告，判定按 §1.5 归属表）
+  gates             五道门一次跑完（context / dims / audit / entry / tasks），任一失败退出码 1（--json / --skip-if-missing，供 pre-commit 与 hook 引用）
   migrate            v3 → v4 半自动迁移：解析旧 sop.py 常量生成 manifest + 补维度摘要行
 
 兼容：Python 3.9+（用到 Path.is_relative_to），纯标准库，跨平台（Windows/macOS/Linux）。
@@ -36,8 +37,10 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import re
@@ -621,6 +624,24 @@ def cmd_init(args) -> int:
 # ---------------------------------------------------------------------------
 
 
+def collect_stale(root: Path, mf: dict) -> list:
+    """返回过期/缺失维度列表 [(dim, diffs, missing)]。
+
+    refresh 与 gates 共用这一处判定：两条路径各算一遍迟早会漂（一边看缺失、一边不看）。
+    """
+    code_root = Path(mf.get("codeRoot", root))
+    stale = []
+    for dim in mf["dimensions"]:
+        dim_path = dim_file_path(root, dim)
+        if not dim_path.exists():
+            stale.append((dim, [], True))
+            continue
+        diffs = diff_anchors(parse_anchors(dim_path), anchor_sources(code_root, dim))
+        if diffs:
+            stale.append((dim, diffs, False))
+    return stale
+
+
 def cmd_refresh(args) -> int:
     root = Path(args.root).resolve()
     mf = load_manifest(root)
@@ -629,23 +650,22 @@ def cmd_refresh(args) -> int:
         return 1
     code_root = Path(mf.get("codeRoot", root))
     ctx_dir = root / "ai" / "context"
+    stale_dims = collect_stale(root, mf)
+    stale_map = {str(d["id"]): (diffs, missing) for d, diffs, missing in stale_dims}
     stale = []
     for dim in mf["dimensions"]:
-        dim_path = dim_file_path(root, dim)
-        if not dim_path.exists():
+        diffs, missing = stale_map.get(str(dim["id"]), (None, False))
+        if missing:
             print("- dim {} {}: 缺失（请 init 或手动创建）".format(dim["id"], dim["title"]))
             stale.append(dim)
             continue
-        stored = parse_anchors(dim_path)
-        current = anchor_sources(code_root, dim)
-        diffs = diff_anchors(stored, current)
-        if diffs:
-            print("- dim {} {}: 过期 ({} 处锚点变化)".format(dim["id"], dim["title"], len(diffs)))
-            for d in diffs[:10]:
-                print("    {}".format(d))
-            stale.append(dim)
-        else:
+        if diffs is None:
             print("+ dim {} {}: 最新".format(dim["id"], dim["title"]))
+            continue
+        print("- dim {} {}: 过期 ({} 处锚点变化)".format(dim["id"], dim["title"], len(diffs)))
+        for d in diffs[:10]:
+            print("    {}".format(d))
+        stale.append(dim)
 
     if args.mark_fresh:
         only = (getattr(args, "only", None) or "").replace(",", " ").split()
@@ -2079,6 +2099,93 @@ def cmd_audit(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 命令：gates（四道门 + 新鲜度检查合成一次调用，供 pre-commit / hook 引用）
+# ---------------------------------------------------------------------------
+
+GATE_NAMES = ("context", "dims", "audit", "entry", "tasks")
+
+
+def _capture(fn) -> tuple:
+    """跑一个子门并接住它自己的输出，返回 (退出码, 最后一行有效输出)。"""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = fn()
+    lines = [ln.strip() for ln in buf.getvalue().splitlines() if ln.strip()]
+    return code, (lines[-1] if lines else "")
+
+
+def cmd_gates(args) -> int:
+    """一次跑完五道门，任一失败退出码 1。
+
+    为什么单独做一个命令："记得跑四道门"是最不可靠的一环。合成一条命令 + 一个退出码之后，
+    pre-commit hook、CI、Claude Code hook 都能直接调用，强制力来自机制而不是自觉。
+    """
+    root = Path(args.root).resolve()
+    mf = load_manifest(root)
+    if mf is None:
+        if getattr(args, "skip_if_missing", False):
+            print("~ 未接入 SOP（缺 ai/{}），gates 跳过".format(MANIFEST_NAME))
+            return 0
+        print("! ai/{} 缺失，请先运行 `python sop.py init`".format(MANIFEST_NAME))
+        return 1
+
+    results = []
+
+    def add(name, status, detail, code):
+        results.append({"name": name, "status": status, "detail": detail, "exit": code})
+
+    code, detail = _capture(lambda: cmd_context_check(root))
+    add("context", "pass" if code == 0 else "fail", detail, code)
+
+    stale = collect_stale(root, mf)
+    if stale:
+        ids = "、".join("dim {}".format(d["id"]) for d, _, _ in stale)
+        add("dims", "fail", "{} 个维度过期，需复核后 refresh --mark-fresh：{}".format(len(stale), ids), 1)
+    else:
+        add("dims", "pass", "所有维度最新", 0)
+
+    code, detail = _capture(lambda: cmd_audit(argparse.Namespace(root=str(root), check=True)))
+    add("audit", "pass" if code == 0 else "fail", detail, code)
+
+    if not entry_config(mf):
+        add("entry", "skip", "manifest 未配置 entry（跳过）", 0)
+    else:
+        code, detail = _capture(lambda: cmd_entry(
+            argparse.Namespace(root=str(root), check=True, out=None, force=False)))
+        add("entry", "pass" if code == 0 else "fail", detail, code)
+
+    code, detail = _capture(lambda: cmd_tasks(
+        argparse.Namespace(root=str(root), check=True, backfill=False, out=None)))
+    add("tasks", "pass" if code == 0 else "fail", detail, code)
+
+    failed = [r for r in results if r["status"] == "fail"]
+    skipped = [r for r in results if r["status"] == "skip"]
+
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "ok": not failed,
+            "passed": len([r for r in results if r["status"] == "pass"]),
+            "failed": [r["name"] for r in failed],
+            "skipped": [r["name"] for r in skipped],
+            "gates": results,
+        }, ensure_ascii=False))
+        return 1 if failed else 0
+
+    print("gates: {} 项（{}）".format(len(results), " / ".join(GATE_NAMES)))
+    for r in results:
+        mark = {"pass": "✅", "fail": "❌", "skip": "~"}[r["status"]]
+        print("{} {:<8} {}".format(mark, r["name"], r["detail"]))
+    if failed:
+        print("\n❌ {} 项未通过：{}".format(len(failed), "、".join(r["name"] for r in failed)))
+        print("   修法：context→`check --context`；dims→复核后 `refresh --mark-fresh`；"
+              "audit→按 §1.5 判定表裁决；entry→`entry`；tasks→`tasks`")
+        return 1
+    print("\n✅ 全部通过（{}{}）".format(
+        len(results), "，{} 项跳过".format(len(skipped)) if skipped else ""))
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # 命令：migrate（v3 → v4 半自动迁移，一次性工具）
 # ---------------------------------------------------------------------------
 
@@ -2539,7 +2646,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.8.3（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.9.0（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")
@@ -2626,6 +2733,12 @@ def build_parser() -> argparse.ArgumentParser:
     pau.add_argument("--root", default=".")
     pau.add_argument("--check", action="store_true", help="发现问题时退出码非 0")
 
+    pg = sub.add_parser("gates", help="五道门一次跑完（context/dims/audit/entry/tasks），供 pre-commit、hook、CI 引用")
+    pg.add_argument("--root", default=".")
+    pg.add_argument("--json", action="store_true", help="机器可读输出（单行 JSON）")
+    pg.add_argument("--skip-if-missing", action="store_true",
+                    help="未接入 SOP（缺 ai/）时安静通过，便于 hook 在任意项目里运行")
+
     pmig = sub.add_parser("migrate", help="v3 → v4 半自动迁移：解析旧 sop.py 常量生成 manifest + 补维度摘要行")
     pmig.add_argument("--root", default=".")
     pmig.add_argument("--old-sop", default=None,
@@ -2656,7 +2769,7 @@ def main(argv=None) -> int:
         "record": cmd_record, "render": cmd_render, "check": cmd_check,
         "lessons": cmd_lessons, "tokens": cmd_tokens, "dims": cmd_dims,
         "audit": cmd_audit, "migrate": cmd_migrate, "entry": cmd_entry,
-        "tasks": cmd_tasks, "scan": cmd_scan,
+        "tasks": cmd_tasks, "scan": cmd_scan, "gates": cmd_gates,
     }
     return handlers[args.cmd](args)
 
