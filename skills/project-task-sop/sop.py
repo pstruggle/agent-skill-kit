@@ -1,5 +1,5 @@
 """
-project-task-sop CLI v4.10.0 — 轻量任务执行规程的机械部分（Manifest 驱动）。
+project-task-sop CLI v4.11.0 — 轻量任务执行规程的机械部分（Manifest 驱动）。
 
 v4 核心变更（2026-10-28，不兼容 v3.x）：
 - 维度体系（集合/锚点/任务映射）全部下沉为项目数据：ai/context.manifest.json 单一事实源。
@@ -46,7 +46,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parent
@@ -1550,7 +1550,7 @@ TASK_STATUS_ALIASES = {
 TASK_STATUS_ORDER = ["doing", "blocked", "pending", "done", "dropped"]
 PLAN_LEDGER_FIELDS = {
     "task.id", "task.title", "task.type", "mode", "status", "parent",
-    "depends", "relates", "supersedes", "updated",
+    "depends", "relates", "supersedes", "updated", "owner", "claimed",
 }
 TASK_FIELD_RX = re.compile(r"^\|\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\|\s*(.*?)\s*\|\s*$")
 
@@ -1570,6 +1570,12 @@ def parse_plan_fields(plan: Path) -> dict:
         if key in PLAN_LEDGER_FIELDS and key not in fields:
             fields[key] = value
     return fields
+
+
+def field_or_empty(raw) -> str:
+    """字段值去空白与反引号；占位符（- / — / 无 / None / null）归一为空串。"""
+    v = (raw or "").strip().strip("`").strip()
+    return "" if v in ("-", "—", "无", "None", "null") else v
 
 
 def parse_refs(value: str) -> list:
@@ -1625,6 +1631,8 @@ def collect_tasks(ai_dir: Path) -> list:
             "relates": parse_refs(f.get("relates", "")),
             "supersedes": parse_refs(f.get("supersedes", "")),
             "updated": (f.get("updated") or "").strip(),
+            "owner": field_or_empty(f.get("owner")),
+            "claimed": field_or_empty(f.get("claimed")),
         })
     return tasks
 
@@ -1730,13 +1738,13 @@ def render_tasks(tasks: list, issues: list) -> str:
         "",
         "## 任务清单",
         "",
-        "| 任务 | 状态 | 类型 | 目标 | 依赖 | 被依赖 | 更新 |",
-        "|------|------|------|------|------|--------|------|",
+        "| 任务 | 状态 | 负责人 | 类型 | 目标 | 依赖 | 被依赖 | 更新 |",
+        "|------|------|--------|------|------|------|--------|------|",
     ]
     order = {s: i for i, s in enumerate(TASK_STATUS_ORDER)}
     for t in sorted(tasks, key=lambda x: (order.get(x["status"], 99), x["id"])):
-        lines.append("| `{}` | {} | {} | {} | {} | {} | {} |".format(
-            t["id"], t["status"], t["type"] or "-", t["title"] or "-",
+        lines.append("| `{}` | {} | {} | {} | {} | {} | {} | {} |".format(
+            t["id"], t["status"], t["owner"] or "-", t["type"] or "-", t["title"] or "-",
             "、".join(t["depends"]) or "-",
             "、".join(blocked_by.get(t["id"], [])) or "-",
             t["updated"] or "-"))
@@ -1815,8 +1823,11 @@ def backfill_plan(plan: Path, status_default: str, dry_run: bool) -> dict:
         "depends": "-",
         "relates": "-",
         "updated": datetime.fromtimestamp(plan.stat().st_mtime).strftime("%Y-%m-%d"),
+        "owner": "-",
+        "claimed": "-",
     }
-    need = [k for k in ("status", "parent", "depends", "relates", "updated") if k not in existing]
+    need = [k for k in ("status", "parent", "depends", "relates", "updated", "owner", "claimed")
+            if k not in existing]
     if not need:
         return {"ok": True, "reason": "已齐全", "added": [], "needs_confirm": False}
     new_rows = ["| {} | {} |".format(k, values[k]) for k in need]
@@ -1907,7 +1918,7 @@ def cmd_tasks(args) -> int:
     if not tasks:
         print("（ai/ 下暂无任务 plan.md）")
         return 0
-    issues = tasks_lint(tasks)
+    issues = tasks_lint(tasks) + claim_lint(ai_dir, tasks)
     text = render_tasks(tasks, issues)
     target = Path(args.out).resolve() if getattr(args, "out", None) else ai_dir / TASKS_FILE
     edges = len(task_edges(tasks)[0])
@@ -2103,6 +2114,206 @@ def cmd_audit(args) -> int:
 # 命令：next（台账可执行前沿——只做约束推导，不排优先级）
 # ---------------------------------------------------------------------------
 
+CLAIM_NAME = ".claim"
+DEFAULT_CLAIM_LEASE = 120  # 分钟；超时后可被接管，避免会话崩了把任务永久锁死
+
+
+def default_owner() -> str:
+    """认领人默认标识：$SOP_OWNER 优先，否则 用户名@主机名（跨机/多会话可分辨）。"""
+    env_owner = (os.environ.get("SOP_OWNER") or "").strip()
+    if env_owner:
+        return env_owner
+    user = (os.environ.get("USERNAME") or os.environ.get("USER") or "unknown").strip()
+    host = (os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or "").strip()
+    return "{}@{}".format(user, host) if host else user
+
+
+def read_claim(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def claim_minutes_left(claim: dict) -> int:
+    """剩余租约分钟；记录不可解析时返回 -1（当作已过期/不可信）。"""
+    try:
+        claimed = datetime.fromisoformat(str(claim.get("claimed", "")))
+        lease = int(claim.get("lease", DEFAULT_CLAIM_LEASE))
+    except (TypeError, ValueError):
+        return -1
+    if claimed.tzinfo is None:
+        claimed = claimed.astimezone()
+    delta = claimed + timedelta(minutes=lease) - datetime.now().astimezone()
+    return int(delta.total_seconds() // 60)
+
+
+def create_claim(path: Path, data: dict) -> bool:
+    """原子创建锁文件（O_EXCL）：并发会话里只有一个能成功。"""
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except OSError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    return True
+
+
+def set_plan_fields(plan: Path, values: dict) -> bool:
+    """改写 plan.md 顶部字段表的值；缺行补在字段表末尾。保留正文与 LF。"""
+    try:
+        lines = plan.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    seen, last_row = set(), -1
+    for i, ln in enumerate(lines):
+        m = TASK_FIELD_RX.match(ln)
+        if not m or m.group(1) not in PLAN_LEDGER_FIELDS:
+            continue
+        key = m.group(1)
+        seen.add(key)
+        last_row = i
+        if key in values:
+            lines[i] = "| {} | {} |".format(key, values[key])
+    if last_row < 0:
+        return False
+    missing = [k for k in values if k not in seen]
+    if missing:
+        lines[last_row + 1:last_row + 1] = ["| {} | {} |".format(k, values[k]) for k in missing]
+    write_text_lf(plan, "\n".join(lines) + "\n")
+    return True
+
+
+def claim_lint(ai_dir: Path, tasks: list) -> list:
+    """认领一致性与租约告警（不阻塞）：超时、owner 缺锁、锁与 owner 不一致、完成仍留锁。"""
+    issues = []
+    for t in tasks:
+        lock = ai_dir / t["dir"] / CLAIM_NAME
+        claim = read_claim(lock) if lock.is_file() else {}
+        left = claim_minutes_left(claim) if claim else None
+        if claim and left is not None and left <= 0:
+            issues.append(("warn", "任务 {} 的认领已超时（`{}` 于 {} 认领，租约 {} 分钟）——确认后 `next --claim {} --force` 接管或 `next --release {}`".format(
+                t["id"], claim.get("owner", "?"), claim.get("claimed", "?"),
+                claim.get("lease", DEFAULT_CLAIM_LEASE), t["id"], t["id"])))
+        if t["owner"] and not claim and t["status"] not in ("done", "dropped"):
+            issues.append(("warn", "任务 {} 有 owner=`{}` 但缺 .claim 锁（可能被手工改，或跨机未同步）".format(
+                t["id"], t["owner"])))
+        if claim and t["owner"] and claim.get("owner") != t["owner"]:
+            issues.append(("warn", "任务 {} 的 owner=`{}` 与锁记录 `{}` 不一致（改字段后没重跑 claim？）".format(
+                t["id"], t["owner"], claim.get("owner"))))
+        if claim and t["status"] in ("done", "dropped"):
+            issues.append(("warn", "任务 {} 已 {} 但仍留有认领锁（用 `next --release {}` 清掉）".format(
+                t["id"], t["status"], t["id"])))
+    return issues
+
+
+def _find_task(tasks: list, tid: str):
+    for t in tasks:
+        if t["id"] == tid or t["dir"] == tid:
+            return t
+    return None
+
+
+def claim_task(args, tasks: list, ai_dir: Path, owner: str) -> int:
+    task = _find_task(tasks, args.claim)
+    if task is None:
+        print("! 找不到任务 `{}`（先看 `python sop.py next` 的前沿清单）".format(args.claim))
+        return 1
+    if task["status"] in ("done", "dropped"):
+        print("! 任务 `{}` 已是 {}，不用认领".format(task["id"], task["status"]))
+        return 1
+    by_id = {t["id"]: t for t in tasks}
+    st = next_dep_state(task["depends"], by_id)
+    if st["open"] or st["missing"]:
+        blockers = "、".join("`{}`({})".format(d, by_id[d]["status"] if d in by_id else "缺失")
+                             for d in st["open"] + st["missing"])
+        print("! 任务 `{}` 还有未完成前置：{}".format(task["id"], blockers))
+        return 1
+
+    lease = max(1, int(getattr(args, "lease", DEFAULT_CLAIM_LEASE)))
+    plan_path = ai_dir / task["dir"] / "plan.md"
+    lock = ai_dir / task["dir"] / CLAIM_NAME
+    claim = {
+        "task": task["id"],
+        "owner": owner,
+        "claimed": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "lease": lease,
+    }
+    old, takeover = {}, ""
+    if lock.is_file():
+        old = read_claim(lock)
+        left = claim_minutes_left(old)
+        if left > 0 and not getattr(args, "force", False):
+            print("! 任务 `{}` 已被 `{}` 认领（{}，租约 {} 分钟，剩 {} 分钟）".format(
+                task["id"], old.get("owner", "?"), old.get("claimed", "?"),
+                old.get("lease", DEFAULT_CLAIM_LEASE), left))
+            print("  确认那个会话已死再抢占：`python sop.py next --claim {} --as {} --force`".format(
+                task["id"], owner))
+            return 1
+        takeover = "接管（租约已过期）" if left <= 0 else "强制接管（原认领未到期）"
+        if not create_claim(lock, claim) and not lock.is_file():
+            print("! 无法写认领锁：{}".format(lock))
+            return 1
+        write_text_lf(lock, json.dumps(claim, ensure_ascii=False, indent=2) + "\n")
+    elif not create_claim(lock, claim):
+        print("! 认领锁刚被另一个会话抢到：{}（重跑 next 看看是谁）".format(lock))
+        return 1
+
+    if not set_plan_fields(plan_path, {
+            "status": "doing", "owner": owner, "claimed": claim["claimed"],
+            "updated": datetime.now().date().isoformat()}):
+        print("! 锁已建，但写 plan.md 字段失败：{}".format(plan_path))
+        return 1
+
+    print("✅ 认领 `{}`：owner=`{}`，租约 {} 分钟（{}）".format(
+        task["id"], owner, lease, claim["claimed"]))
+    print("   锁文件 {}".format(lock))
+    if takeover:
+        print("   注意：{}（原认领 `{}`）".format(takeover, old.get("owner", "?")))
+    cmd_tasks(argparse.Namespace(root=str(ai_dir.parent), check=False,
+                                 backfill=False, out=None, **{}))
+    return 0
+
+
+def release_task(args, tasks: list, ai_dir: Path, owner: str) -> int:
+    task = _find_task(tasks, args.release)
+    if task is None:
+        print("! 找不到任务 `{}`".format(args.release))
+        return 1
+    lock = ai_dir / task["dir"] / CLAIM_NAME
+    plan_path = ai_dir / task["dir"] / "plan.md"
+    claim = read_claim(lock) if lock.is_file() else {}
+    holder = claim.get("owner") or task["owner"]
+    force = getattr(args, "force", False)
+    if holder and holder != owner and not force:
+        print("! `{}` 正被 `{}` 认领，释放别人的任务要加 --force".format(task["id"], holder))
+        return 1
+    if not lock.is_file() and not task["owner"]:
+        print("! `{}` 没有认领记录（已释放，或本是手工 doing）".format(task["id"]))
+        return 1
+    if lock.is_file():
+        lock.unlink()
+    finished = task["status"] in ("done", "dropped")
+    if finished:
+        # 已完成任务：owner/claimed 是"谁做的"记录，不清空；只删锁
+        values = {"status": task["status"], "updated": datetime.now().date().isoformat()}
+    else:
+        values = {"status": "pending", "owner": "-", "claimed": "-",
+                  "updated": datetime.now().date().isoformat()}
+    if not set_plan_fields(plan_path, values):
+        print("! 锁已删除，但写 plan.md 失败：{}".format(plan_path))
+        return 1
+    if finished:
+        print("✅ 已释放 `{}` 的锁（status 保持 {}，owner 留作记录）".format(
+            task["id"], task["status"]))
+    else:
+        print("✅ 已释放 `{}`（status→pending，owner 清空）".format(task["id"]))
+    cmd_tasks(argparse.Namespace(root=str(ai_dir.parent), check=False,
+                                 backfill=False, out=None, **{}))
+    return 0
+
+
 def next_dep_state(depends, by_id) -> dict:
     """把 depends 分类成 done / dropped / open（未完成）/ missing（引用不存在）。"""
     state = {"done": [], "dropped": [], "open": [], "missing": []}
@@ -2145,7 +2356,7 @@ def _dep_label(dep, by_id) -> str:
     return "`{}`({})".format(dep, other["status"] if other else "缺失")
 
 
-def _print_wave(level, items, by_id) -> None:
+def _print_wave(level, items, by_id, ai_dir: Path) -> None:
     head = ("第 {} 波（现在可做）".format(level) if level == 1
             else "第 {} 波（等前序）".format(level))
     print(head)
@@ -2156,14 +2367,36 @@ def _print_wave(level, items, by_id) -> None:
         if st["dropped"]:
             tail = "前置已放弃 {}".format("、".join("`{}`".format(d) for d in st["dropped"]))
             note = (note + "；" + tail) if note else tail
-        print("  - `{}` [{}] {}{}".format(t["id"], t["status"], t["title"],
-                                          (" " + note) if note else ""))
+        lock = ai_dir / t["dir"] / CLAIM_NAME
+        claim = read_claim(lock) if lock.is_file() else {}
+        if claim:
+            left = claim_minutes_left(claim)
+            state = "认领中，剩 {} 分钟".format(left) if left > 0 else "认领已超时"
+            tag = "（`{}` {}）".format(claim.get("owner", "?"), state)
+        elif t["owner"]:
+            tag = "（`{}`，缺锁记录）".format(t["owner"])
+        else:
+            tag = ""
+        print("  - `{}` [{}] {}{}{}".format(t["id"], t["status"], t["title"],
+                                            (" " + note) if note else "", tag))
 
 
 def cmd_next(args) -> int:
-    """输出可执行前沿：现在能做什么、被谁挡着、哪些排不出来。"""
+    """输出可执行前沿：现在能做什么、被谁挡着、哪些排不出来；`--claim/--release` 走认领。"""
     root = Path(args.root).resolve()
-    tasks = collect_tasks(root / "ai")
+    ai_dir = root / "ai"
+    tasks = collect_tasks(ai_dir)
+    owner = getattr(args, "as_name", None) or default_owner()
+    if getattr(args, "claim", None):
+        if not tasks:
+            print("! ai/ 下没有任务 plan.md，无法认领")
+            return 1
+        return claim_task(args, tasks, ai_dir, owner)
+    if getattr(args, "release", None):
+        if not tasks:
+            print("! ai/ 下没有任务 plan.md，无法释放")
+            return 1
+        return release_task(args, tasks, ai_dir, owner)
     if not tasks:
         print("（ai/ 下暂无任务 plan.md：先用模板建 ai/<task>/plan.md，再跑 `sop.py tasks`）")
         return 0
@@ -2223,7 +2456,7 @@ def cmd_next(args) -> int:
 
     for lvl in sorted(waves):
         print("")
-        _print_wave(lvl, order(waves[lvl]), by_id)
+        _print_wave(lvl, order(waves[lvl]), by_id, ai_dir)
 
     if external:
         print("\n外部阻塞（depends 已满足，但 status=blocked）")
@@ -2795,7 +3028,7 @@ def cmd_tokens(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.10.0（manifest 驱动）")
+    p = argparse.ArgumentParser(prog="sop.py", description="project-task-sop CLI v4.11.0（manifest 驱动）")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="初始化 ai/ 结构 + manifest + 维度文件")
@@ -2891,6 +3124,13 @@ def build_parser() -> argparse.ArgumentParser:
     pn = sub.add_parser("next", help="台账可执行前沿：现在能做什么、被谁挡着（只有 depends 约束，不排优先级）")
     pn.add_argument("--root", default=".")
     pn.add_argument("--json", action="store_true", help="机器可读输出（单行 JSON）")
+    pn.add_argument("--claim", metavar="TASK_ID", help="认领任务：写 owner/claimed + 建 .claim 租约锁（多会话/多机防抢）")
+    pn.add_argument("--release", metavar="TASK_ID", help="释放认领：删锁 + status→pending + owner/claimed 清空")
+    pn.add_argument("--as", dest="as_name", metavar="NAME",
+                    help="认领人标识（缺省 $SOP_OWNER 或 用户名@主机名）")
+    pn.add_argument("--lease", type=int, default=DEFAULT_CLAIM_LEASE, metavar="MIN",
+                    help="租约分钟数（默认 {}，超时后可被接管）".format(DEFAULT_CLAIM_LEASE))
+    pn.add_argument("--force", action="store_true", help="抢占未到期的认领 / 释放别人的认领")
 
     pmig = sub.add_parser("migrate", help="v3 → v4 半自动迁移：解析旧 sop.py 常量生成 manifest + 补维度摘要行")
     pmig.add_argument("--root", default=".")

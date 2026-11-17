@@ -11,6 +11,8 @@
 | parent | - |
 | depends | - |
 | relates | - |
+| owner | - |
+| claimed | - |
 | updated | YYYY-MM-DD |
 
 ## objective
@@ -45,6 +47,7 @@
 <!-- 说明：必填 = task.id / task.title / task.type / objective / scope.included / acceptance / steps。
      缺失或字段不全时，先补全再执行（light 模式可只写最小计划）。
      assumptions 为可选项，仅在用户授权跳过关键边界澄清时，记录所采用的关键假设。
-     台账字段 = status / parent / depends / relates / updated：由 `python sop.py tasks` 读取并聚合到 ai/TASKS.md。
+     台账字段 = status / parent / depends / relates / owner / claimed / updated：由 `python sop.py tasks` 读取并聚合到 ai/TASKS.md。
        status 收工改为 done；parent 写拆分来源任务 id；depends 写阻塞前置（[a, b]），relates 写相关但无阻塞的任务 id。
+       owner / claimed 由 `python sop.py next --claim <task-id>` 写入（含 .claim 租约锁），不要手改；收工或放手用 `next --release`。
      台账是生成物，勿手改 TASKS.md；改状态请改本文件的字段表后重跑 `python sop.py tasks`。 -->

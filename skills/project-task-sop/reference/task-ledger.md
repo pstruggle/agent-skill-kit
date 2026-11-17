@@ -64,15 +64,34 @@ python sop.py next --json   # 机器可读：ready / blocked / unsorted / waves
 
 **它不做的事（刻意的）**：不按重要性/紧急度排序、不推工期、不做 stale 告警。这三件都需要业务语义与主观阈值，脚本排了只会让人误以为"这就是该做的"。
 
-### 为什么没有 `--claim`
+### 认领（`next --claim` / `--release`）
 
-早期设计（对外报告 P1-2）写的是 `next --claim` 写 `owner`，实现时判断**现在不该做**：
+`status: doing` 只能说明"有人在做"，不能说明是**谁**、是不是**还活着**。多会话/多机并行时，认领要有归属、时间和租约，否则两个人都在 `doing` 里闷头改同一份东西。
 
-- `ai/` 不进版本库（推荐形态如此）。owner 写进 `plan.md` 后不跨机同步，正是最需要"认领"的多人场景失效。
-- 没有租约的 claim 是假锁：两个会话同时 claim 会互相覆盖，会话崩了 `doing` 永久残留，没有回收机制。
-- `status: doing` 本来就承担"有人在做"的信号，`--claim` 只省一次手工编辑，却多一条写 `plan.md` 的路径。
+```sh
+python sop.py next --claim <task-id>              # 认领：写 owner/claimed + status=doing + 建 .claim 锁
+python sop.py next --claim <task-id> --as alice@pc --lease 90
+python sop.py next --claim <task-id> --force      # 抢占未到期的认领（确认对方会话已死才用）
+python sop.py next --release <task-id>            # 释放：删锁 + status=pending + owner/claimed 清空
+```
 
-要真做，前提是先有 P1-3 的 owner 字段 + 冲突/租约策略。在此之前，**开工时手工把 `status` 改 `doing`** 就是约定的认领动作。
+落盘形态（两处，分工明确）：
+
+| 载体 | 内容 | 谁写 |
+|------|------|------|
+| `plan.md` 的 `owner` / `claimed` | 人读的归属与认领时间，随台账渲染到 `TASKS.md` 的「负责人」列 | `next --claim`（工具），**别手改** |
+| `ai/<task>/.claim`（JSON） | `task` / `owner` / `claimed` / `lease`：租约的权威记录 | `next --claim`（原子创建） |
+
+规则与边界：
+
+- **原子性只在本机保证**：`.claim` 用 `O_CREAT|O_EXCL` 创建，同机两个会话同时认领只有一个成功（失败方会看到"刚被另一个会话抢到"）。
+- **跨机靠租约与版本库兜底**：`ai/` 进库的项目里，`.claim` 随提交同步；两台机器同时认领会产生一次 git 冲突，`tasks --check` 也会报 owner 与锁不一致。它**不是分布式锁**，是"冲突可见 + 超时可接管"。
+- **租约默认 120 分钟**（`--lease` 可调）。到期不会自动改状态，但允许被直接接管（`claim` 会提示「接管（租约已过期）」）；未到期要抢必须显式 `--force`。
+- **认领人标识**：`--as` > `$SOP_OWNER` > `用户名@主机名`。多机时别用同一个名字，否则冲突检测失去意义。
+- **`tasks --check` 的认领告警**（不阻塞）：认领超时 / 有 owner 但缺锁 / owner 与锁不一致 / 已完成任务仍留锁。
+- 只能认领"可执行"的任务：有未完成 `depends`、或已 `done`/`dropped` 都会被拒。
+
+**已知取舍**：认领是**协作信号，不是互斥锁**——`sop.py` 不会阻止别人直接改同一个文件。要更强的保证只能上外部锁服务，那超出这个 skill 的定位（无依赖、纯本地）。
 
 ## 存量项目接入（已有任务没有台账字段）
 

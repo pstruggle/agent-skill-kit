@@ -17,10 +17,11 @@ agent-skill-kit/
 │  ├─ test_scan.py       # init 后自动推导 scan 的行为契约（10 例）
 │  ├─ test_gates.py      # 五道门聚合与 hook 友好参数（9 例）
 │  ├─ test_next.py       # 可执行前沿：波次/阻塞原因/成环/缺失引用（10 例）
+│  ├─ test_claim.py      # 认领：owner/租约锁/抢占/释放/告警（16 例）
 │  ├─ test_install_targets.py # ps1/sh 目标一致 + 三家新目标路径（5 例，2 例按平台跳过）
 │  ├─ test_plugin_manifests.py # 两端 plugin/marketplace 清单契约（7 例）
 │  └─ test_version_sync.py # 五处版本号 + frontmatter 子命令清单 + 触发面守卫（6 例）
-│                        # 合计 89 例，标准库 unittest，无第三方依赖
+│                        # 合计 103 例，标准库 unittest，无第三方依赖
 ├─ .claude-plugin/       # Claude Code 插件清单 + 市场目录
 │  ├─ plugin.json
 │  └─ marketplace.json
@@ -45,7 +46,7 @@ agent-skill-kit/
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联，支持存量补录）、可执行前沿（next：现在能做什么、被谁挡着）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记、五道门一次跑完（gates）；可直接作为 Claude Code / Cursor 插件安装 | 4.10.0 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联 + 认领/租约，支持存量补录）、可执行前沿（next：现在能做什么、被谁挡着）、认领与释放（next --claim/--release）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记、五道门一次跑完（gates）；可直接作为 Claude Code / Cursor 插件安装 | 4.11.0 |
 
 ## 五道门与强制力
 
@@ -83,12 +84,17 @@ next: 5 个任务 / 3 个未完成
 - **只算约束，不排优先级**：谁先做是业务判断，脚本排了只会误导；它只回答"卡在哪个 `depends` 上"。
 - `dropped` 的前置不阻塞后继，行内标「前置已放弃」；引用缺失或 `depends` 成环进「无法排序」，退出码仍是 0。
 - `--json` 给自动化用：`ready` / `blocked` / `unsorted` / `waves`。
-- **没有 `--claim`**：`ai/` 不进版本库，`owner` 无法跨机同步，无租约的认领是假锁——理由与前提写在 `reference/task-ledger.md`。开工时把 `status` 改 `doing` 就是约定的认领动作。
+- **认领**：`next --claim <id>` 写 `owner`/`claimed` + `status=doing`，并在 `ai/<task>/.claim` 建租约锁；`next --release` 释放。同机靠 `O_EXCL` 原子创建互斥，未到期抢占要 `--force`，超时（默认 120 分钟）可接管；`tasks --check` 会报超时/缺锁/owner 不一致。**跨机不是分布式锁**——`ai/` 进库时靠 `.claim` 随库同步 + git 冲突可见 + 租约过期兜底。细节见 `reference/task-ledger.md`。
+
+```sh
+python skills/project-task-sop/sop.py next --claim tests --as alice@pc --lease 90 --root <项目根>
+python skills/project-task-sop/sop.py next --release tests --root <项目根>
+```
 
 ## 回归测试
 
 ```sh
-python -m unittest discover -s tests -v      # 89 用例，约 48 s，全部在临时目录里跑（2 例按平台跳过）
+python -m unittest discover -s tests -v      # 105 用例，约 56 s，全部在临时目录里跑（2 例按平台跳过）
 ```
 
 `sop.py` 是纯标准库实现的单文件 CLI，改完至少跑一遍：
@@ -268,7 +274,7 @@ cd agent-skill-kit
 
 Run `--list` to see the skills and destinations, `--mode link` to symlink instead of copy, `--uninstall` to remove, `--help` for the full flag list.
 
-Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / scan / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/` (stdlib `unittest`, 89 cases, no third-party deps).
+Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / scan / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/` (stdlib `unittest`, 103 cases, no third-party deps).
 
 The repo root doubles as a plugin root for both Claude Code (`.claude-plugin/`) and Cursor (`.cursor-plugin/`): register it with `claude plugin marketplace add pstruggle/agent-skill-kit`, then `claude plugin install project-task-sop@agent-skill-kit`.
 
