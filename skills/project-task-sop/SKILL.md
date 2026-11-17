@@ -12,7 +12,7 @@ whenToUse:
 disable-model-invocation: false
 ---
 
-# Project Task SOP v4.12.2 — 轻量任务执行规程
+# Project Task SOP v4.12.3 — 轻量任务执行规程
 
 > **原则**：先判断该不该用，再决定用多重的流程。文书越少，Token 越省。
 > **v3.x 基础**：决策门 light/standard/full；JSONL 单一事实源；教训沉淀 + `sop.py lessons`；上下文 token 账本；启动前边界对齐门；维度 9 项目级教训。
@@ -254,5 +254,6 @@ python path/to/skills/project-task-sop/sop.py gates --root "$(git rev-parse --sh
 | 4.12.0 | 2026-11-17 | `tasks --json`（P1-3 收尾） |
 | 4.12.1 | 2026-11-17 | `migrate` 补测试修缺陷（P2） |
 | 4.12.2 | 2026-11-17 | 主文档瘦身 + token 预算守卫（P2） |
+| 4.12.3 | 2026-11-17 | README 叙事重写 + 过时数字修正（P3） |
 
 *Skill authored for DeepSeek Harness (DSH) — compatible with skill catalog v1*

@@ -6,6 +6,35 @@
 
 > A small, agent-agnostic skill kit. One source of truth under `skills/`, one installer that copies or links each skill into the directory your agent already reads.
 
+## 它解决什么问题
+
+多会话、多 Agent 的长期项目里，最贵的不是写代码，是**每次会话重新建立起"这个仓库发生过什么"**：
+
+| 症状 | 你会听到的话 | 本技能的对应机制 |
+|---|---|---|
+| 新会话从零摸仓库 | 「接着上次做」——然后 agent 又去 glob 一遍目录 | **维度上下文**：9 个维度按任务类型按需读，入口文件只做指向、不复述正文 |
+| 忘了为什么这么改 | 「这个仓库之前怎么改的」「为什么这里这么设计」 | **变更锚点 + 过期检测**：维度文件靠哈希自动判过期，`refresh` 直接告诉你哪份结论已失效 |
+| 不知道做到哪、下一步做什么 | 「任务排一下，接下来做哪个」 | **任务台账 + 可执行前沿**：`plan.md` 字段聚合成 `TASKS.md`，`next` 算出现在能做什么、被谁挡着 |
+| 两个会话撞同一个任务 | 一个人也会并发 | **认领 + 租约**：`--claim` 建 `.claim` 锁，未到期强抢要 `--force`，超时可接管 |
+| 收工前"忘了跑检查" | 「收工前把门跑一遍」 | **五道门 + hook 片段**：一条命令一个退出码，能挂 pre-commit 与 Stop hook |
+
+边界同样要写清，否则它会被当成万能筐：
+
+- **不排优先级、不推工期**——那是业务判断，脚本排了只会误导；`next` 只回答"卡在哪个 `depends` 上"。
+- **本身不持有强制力**——装 hook 才有，没装就只有纪律（默认不安装，见下文）。
+- **`ai/` 默认不进版本库**——跨机协作是"`.claim` 随库同步 + git 冲突可见 + 租约过期兜底"，不是分布式锁。
+- **文书越少越省**——任务 <5 分钟、纯问答、无多会话价值时，它自称不适用，直接干活不写任何文书。
+
+## 5 分钟上手
+
+```sh
+python skills/project-task-sop/sop.py init  --root <项目根>    # 建 ai/ + manifest + 维度骨架
+python skills/project-task-sop/sop.py scan  --root <项目根>    # 按真实文件填维度 1/2/4/5/6/8 的事实初稿（标「待复核」）
+python skills/project-task-sop/sop.py gates --root <项目根>    # 五道门一次跑完，红了给修法
+```
+
+`scan` 只写事实、不做架构判断；维度 3/7/9 这类语义判断补完，再 `refresh --mark-fresh` 封存。之后每次开工先 `next`，动手前 `next --claim <id>`。
+
 ## 目录结构
 
 ```
@@ -22,8 +51,8 @@ agent-skill-kit/
 │  ├─ test_migrate.py    # v3→v4 迁移：不覆盖/不落盘/摘要注入/手工区保留（13 例）
 │  ├─ test_install_targets.py # ps1/sh 目标一致 + 三家新目标路径（5 例，2 例按平台跳过）
 │  ├─ test_plugin_manifests.py # 两端 plugin/marketplace 清单契约（7 例）
-│  └─ test_version_sync.py # 五处版本号 + frontmatter 子命令清单 + 触发面守卫（6 例）
-│                        # 合计 103 例，标准库 unittest，无第三方依赖
+│  └─ test_version_sync.py # 五处版本号 + frontmatter 子命令清单 + 触发面 + token 预算守卫（7 例）
+│                        # 合计 126 例，标准库 unittest，无第三方依赖
 ├─ .claude-plugin/       # Claude Code 插件清单 + 市场目录
 │  ├─ plugin.json
 │  └─ marketplace.json
@@ -48,7 +77,7 @@ agent-skill-kit/
 
 | 技能 | 用途 | 版本 |
 |------|------|------|
-| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联 + 认领/租约，支持存量补录）、可执行前沿（next：现在能做什么、被谁挡着）、认领与释放（next --claim/--release）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记、五道门一次跑完（gates）；可直接作为 Claude Code / Cursor 插件安装 | 4.12.2 |
+| `project-task-sop` | 轻量项目任务执行规程：规模决策门（light/standard/full）、init 后自动推导维度初稿（scan）、模块化上下文索引、任务台账（完成状态 + 相互关联 + 认领/租约，支持存量补录）、可执行前沿（next：现在能做什么、被谁挡着）、认领与释放（next --claim/--release）、仓库入口文件生成与落点决策、JSONL 实验去重、教训检索、决策点审计笔记、五道门一次跑完（gates）；可直接作为 Claude Code / Cursor 插件安装 | 4.12.3 |
 
 ## 五道门与强制力
 
@@ -93,6 +122,23 @@ next: 5 个任务 / 3 个未完成
 python skills/project-task-sop/sop.py next --claim tests --as alice@pc --lease 90 --root <项目根>
 python skills/project-task-sop/sop.py next --release tests --root <项目根>
 ```
+
+## 它到底拦住了什么（可度量，不吹）
+
+README 里不放没有依据的百分比。这个仓库能自证的是**结构和门禁**，不是"省了多少时间"：
+
+| 可核对的事实 | 怎么核对 |
+|---|---|
+| 126 个回归用例、零第三方依赖 | `python -m unittest discover -s tests` |
+| 五道门一个退出码 | `sop.py gates --root .`（`--json` 给自动化；`--skip-if-missing` 给未接入项目放行） |
+| 五处版本号同源、历史表升序无重复 | `tests/test_version_sync.py`（改版本漏一处就红） |
+| 主文档 token 预算（SKILL ~5.5k / ≤6000，changelog ≤4000） | `tests/test_version_sync.py::test_skill_body_within_token_budget`；`sop.py tokens SKILL.md` 复核 |
+| 台账与 `plan.md` 不漂移 | `sop.py tasks --check`（状态枚举 / id 唯一 / 引用存在 / 成环 / 同步 / 认领租约告警） |
+| 上下文过期可发现 | `sop.py refresh`（逐维度列出"锚点变了还是新增了"） |
+
+使用中可观测的只有**事实现场**，不是收益数字：`next --json` 的波次与阻塞原因、`tasks --json` 的 `stats` 与派生 `depends_open`/`blocked_by`、`gates --json` 的逐门结果、`refresh` 报出的过期维度数。
+
+**没实测的部分（如实标注）**：本机无 `claude` CLI、也无 Cursor，插件真实安装流程与 `claude plugin validate` 未跑过，只由 `test_plugin_manifests.py` 保证清单可解析、路径可解析、两端名称与版本同源。
 
 ## 回归测试
 
@@ -277,7 +323,7 @@ cd agent-skill-kit
 
 Run `--list` to see the skills and destinations, `--mode link` to symlink instead of copy, `--uninstall` to remove, `--help` for the full flag list.
 
-Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / scan / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/` (stdlib `unittest`, 103 cases, no third-party deps).
+Inside `skills/project-task-sop`, `sop.py` is a stdlib-only CLI that maintains the project's `ai/` context (init / scan / refresh / check / audit / entry) and the task ledger (`tasks`, `tasks --check`, `tasks --backfill`). Its regression suite lives in `tests/` (stdlib `unittest`, 126 cases, no third-party deps).
 
 The repo root doubles as a plugin root for both Claude Code (`.claude-plugin/`) and Cursor (`.cursor-plugin/`): register it with `claude plugin marketplace add pstruggle/agent-skill-kit`, then `claude plugin install project-task-sop@agent-skill-kit`.
 
